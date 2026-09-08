@@ -1,0 +1,9 @@
+build/
+.DS_Store
+*.map
+compile_commands.json
+.cache/
+
+# CubeMX: keep the .ioc, drop everything it generates around it.
+cubemx/*
+!cubemx/*.ioc

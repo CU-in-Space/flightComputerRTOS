@@ -1,0 +1,16 @@
+# clangd doesn't know GCC's ARM-specific flags or its bundled headers.
+# query-driver (set in .vscode/settings.json) makes it ask arm-none-eabi-gcc
+# for its real include paths; the rest just silences flags clang rejects.
+CompileFlags:
+  Compiler: arm-none-eabi-gcc
+  Add:
+    - --target=arm-none-eabi
+    - -Wno-unknown-warning-option
+  Remove:
+    - --specs=*
+    - -mfpu=*
+    - -mfloat-abi=*
+Diagnostics:
+  UnusedIncludes: None
+  Suppress:
+    - unknown-attributes
