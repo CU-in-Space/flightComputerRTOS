@@ -1,25 +1,34 @@
-/* Scaffold entry point -- brings the kernel up and nothing else.
+/* Scaffold entry point -- brings the clocks and kernel up, and nothing else.
  * Real flight logic goes in tasks created from vStartupTask().
  */
-#include "stm32h7xx_hal.h"
+#include "main.h"
+#include "system_clock.h"
+#include "gpio.h"
+#include "usart.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
-void Error_Handler(void);
 static void vStartupTask(void *pvParameters);
 
 int main(void)
 {
-    /* The H7 boots with both caches off. I-cache is free performance; D-cache
-     * is deliberately left off until we have cache-maintenance discipline
-     * around DMA buffers (SCB_CleanDCache_by_Addr / SCB_InvalidateDCache_by_Addr). */
+    /* MPU first. The Cortex-M7 speculatively reads ahead, and will fault on
+     * the unmapped 0x60000000-0xDFFFFFFF range unless it is marked no-access. */
+    MPU_Config();
+
+    /* I-cache is free performance. D-cache stays off until we have
+     * cache-maintenance discipline around DMA buffers. */
     SCB_EnableICache();
 
+    /* Order matters: HAL_MspInit() (called from HAL_Init) enables the SYSCFG
+     * clock, and SystemClock_Config() needs that to set the overdrive bit
+     * required for VOS0 / 480 MHz. */
     HAL_Init();
+    SystemClock_Config();
 
-    /* TODO(clocks): call a CubeMX-generated SystemClock_Config() here. Until
-     * then the core runs from the 64 MHz HSI, not the 480 MHz PLL. */
+    MX_GPIO_Init();
+    MX_USART3_UART_Init();
 
     if (xTaskCreate(vStartupTask,
                     "startup",
