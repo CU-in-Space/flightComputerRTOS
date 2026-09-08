@@ -1,6 +1,6 @@
-# cuis-fc — STM32H743 + FreeRTOS skeleton
+# cuis-fc — STM32H753ZI + FreeRTOS skeleton
 
-Build scaffold for the CU InSpace flight computer (STM32H743VIT6, per TS-03).
+Build scaffold for the CU InSpace flight computer (STM32H753ZIT6 on a NUCLEO-H753ZI).
 It compiles, links, and starts the FreeRTOS scheduler with one idle placeholder
 task. **There is no application logic yet** — that is deliberate.
 
@@ -38,7 +38,7 @@ Current footprint: ~9 KB flash, ~67 KB RAM (64 KB of that is the FreeRTOS heap).
 ## Flash and debug
 
 ```bash
-openocd -f interface/stlink.cfg -f target/stm32h7x.cfg -c 'program build/debug/cuis-fc.elf verify reset exit'
+openocd -f interface/stlink.cfg -f target/stm32h7x_dual_bank.cfg -c 'program build/debug/cuis-fc.elf verify reset exit'
 ```
 
 Or press F5 in VS Code — `launch.json` starts OpenOCD, flashes, breaks at
@@ -53,7 +53,7 @@ CMakePresets.json              debug / release presets
 cmake/arm-none-eabi-gcc.cmake  toolchain file (CPU flags live here)
 include/FreeRTOSConfig.h       kernel configuration
 include/stm32h7xx_hal_conf.h   HAL module enables + oscillator values
-linker/STM32H743xI_FLASH.ld    memory map
+linker/STM32H753ZI_FLASH.ld    memory map
 src/main.c                     scheduler startup + FreeRTOS hooks
 src/stm32h7xx_it.c             core fault handlers
 lib/                           pinned vendor submodules
@@ -98,8 +98,8 @@ for DMA buffers.
 - [ ] **Clock config.** The core currently runs from the 64 MHz HSI, not the
       480 MHz PLL. Generate `SystemClock_Config()` with STM32CubeMX and call it
       from `main()` where the TODO is.
-- [ ] **`HSE_VALUE`** in `include/stm32h7xx_hal_conf.h` is ST's 25 MHz default.
-      Set it to the actual crystal on the board.
-- [ ] Drop `STM32H743.svd` (from ST's website) into `debug/` and uncomment
+- [ ] **`HSE_VALUE`** is set to 8000000 for the NUCLEO's ST-LINK MCO.
+      Change it if you move to a board with its own crystal.
+- [ ] Drop `STM32H753.svd` (from ST's website) into `debug/` and uncomment
       `svdFile` in `launch.json` for named peripheral registers while debugging.
 - [ ] Revisit `configTOTAL_HEAP_SIZE` (currently 64 KB) once the task set is real.

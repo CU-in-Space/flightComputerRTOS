@@ -6,9 +6,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # feeds clangd / C-C++ IntelliSense
 
-set(TARGET_MCU     STM32H743xx)
-set(LINKER_SCRIPT  ${CMAKE_SOURCE_DIR}/linker/STM32H743xI_FLASH.ld)
-set(STARTUP_SOURCE ${CMAKE_SOURCE_DIR}/lib/cmsis_device_h7/Source/Templates/gcc/startup_stm32h743xx.s)
+set(TARGET_MCU     STM32H753xx)
+set(LINKER_SCRIPT  ${CMAKE_SOURCE_DIR}/linker/STM32H753ZI_FLASH.ld)
+set(STARTUP_SOURCE ${CMAKE_SOURCE_DIR}/lib/cmsis_device_h7/Source/Templates/gcc/startup_stm32h753xx.s)
 
 # -Og keeps the code debuggable without the noise of -O0.
 set(CMAKE_C_FLAGS_DEBUG "-Og -g3 -ggdb")

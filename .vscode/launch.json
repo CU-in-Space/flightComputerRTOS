@@ -8,19 +8,19 @@
       "servertype": "openocd",
       "cwd": "${workspaceFolder}",
       "executable": "${workspaceFolder}/build/debug/cuis-fc.elf",
-      "device": "STM32H743VI",
+      "device": "STM32H753ZI",
       "configFiles": [
         "interface/stlink.cfg",
-        "target/stm32h7x.cfg"
+        "target/stm32h7x_dual_bank.cfg"
       ],
       "runToEntryPoint": "main",
       // Gives the debugger a task list instead of a single bare thread.
       "rtos": "FreeRTOS",
       "preLaunchTask": "Build (debug)",
       "showDevDebugOutput": "none"
-      // Drop STM32H743.svd into debug/ and uncomment for named peripheral
+      // Drop STM32H753.svd into debug/ and uncomment for named peripheral
       // registers in the CORTEX PERIPHERALS view:
-      // "svdFile": "${workspaceFolder}/debug/STM32H743.svd"
+      // "svdFile": "${workspaceFolder}/debug/STM32H753.svd"
     },
     {
       "name": "Attach (OpenOCD + ST-Link)",
@@ -29,10 +29,10 @@
       "servertype": "openocd",
       "cwd": "${workspaceFolder}",
       "executable": "${workspaceFolder}/build/debug/cuis-fc.elf",
-      "device": "STM32H743VI",
+      "device": "STM32H753ZI",
       "configFiles": [
         "interface/stlink.cfg",
-        "target/stm32h7x.cfg"
+        "target/stm32h7x_dual_bank.cfg"
       ],
       "rtos": "FreeRTOS"
     }

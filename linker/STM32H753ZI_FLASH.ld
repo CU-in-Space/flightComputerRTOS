@@ -1,4 +1,4 @@
-/* STM32H743xI (2 MB flash / 1 MB RAM) -- execute from flash.
+/* STM32H753ZI on NUCLEO-H753ZI (2 MB flash, dual bank / 1 MB RAM).
  *
  * NOTE ON RAM CHOICE: .data/.bss/heap/stack live in AXI SRAM (RAM_D1), not in
  * DTCMRAM as ST's stock template does. DTCM is faster but is NOT reachable by
