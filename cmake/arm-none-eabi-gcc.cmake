@@ -10,12 +10,18 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 set(TOOLCHAIN_PREFIX arm-none-eabi-)
 
-# Homebrew keeps this keg off the default PATH on some machines, so hint at it.
+# Resolved from PATH first. The PATHS below are only consulted if PATH has no
+# toolchain -- deliberately PATHS, not HINTS: CMake searches HINTS *before*
+# PATH, so a stale install in a hinted location would silently beat a good one
+# on PATH. (That happened: macOS 27 dropped Rosetta, and the old x86-only
+# Homebrew gcc-arm-none-eabi formula won over the working native toolchain.)
+file(GLOB ARM_TOOLCHAIN_DIRS
+    "/Applications/ArmGNUToolchain/*/arm-none-eabi/bin"           # macOS cask
+    "/opt/arm-gnu-toolchain-*/bin"                                 # Linux tarball
+    "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/*/bin"  # Windows
+    "C:/Program Files/Arm GNU Toolchain arm-none-eabi/*/bin")
 find_program(ARM_GCC ${TOOLCHAIN_PREFIX}gcc
-    HINTS /opt/homebrew/opt/gcc-arm-none-eabi/bin
-          /Applications/ArmGNUToolchain/bin
-          /opt/homebrew/bin
-          /usr/local/bin
+    PATHS ${ARM_TOOLCHAIN_DIRS} /usr/bin /usr/local/bin
     REQUIRED)
 get_filename_component(TOOLCHAIN_BIN "${ARM_GCC}" DIRECTORY)
 

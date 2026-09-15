@@ -10,8 +10,7 @@
       "executable": "${workspaceFolder}/build/debug/cuis-fc.elf",
       "device": "STM32H753ZI",
       "configFiles": [
-        "interface/stlink.cfg",
-        "target/stm32h7x_dual_bank.cfg"
+        "${workspaceFolder}/openocd/nucleo-h753zi.cfg"
       ],
       "runToEntryPoint": "main",
       // Gives the debugger a task list instead of a single bare thread.
@@ -31,8 +30,7 @@
       "executable": "${workspaceFolder}/build/debug/cuis-fc.elf",
       "device": "STM32H753ZI",
       "configFiles": [
-        "interface/stlink.cfg",
-        "target/stm32h7x_dual_bank.cfg"
+        "${workspaceFolder}/openocd/nucleo-h753zi.cfg"
       ],
       "rtos": "FreeRTOS"
     }

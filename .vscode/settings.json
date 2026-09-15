@@ -4,23 +4,26 @@
 
   // --- IntelliSense -------------------------------------------------------
   // clangd and the cpptools engine both installed = duplicate, contradictory
-  // squiggles. clangd wins here (better cross-referencing on embedded code),
-  // so the cpptools engine is switched off. cpptools stays installed because
-  // cortex-debug's disassembly and some views still use it.
+  // squiggles. clangd wins here; cpptools stays installed because cortex-debug
+  // still uses parts of it.
   "C_Cpp.intelliSenseEngine": "disabled",
   "clangd.arguments": [
     "--compile-commands-dir=${workspaceFolder}/build/debug",
-    "--query-driver=/opt/homebrew/opt/gcc-arm-none-eabi/bin/arm-none-eabi-*",
+    "--query-driver=**/arm-none-eabi-*",
     "--header-insertion=never",
     "--background-index"
   ],
 
   // --- Debug --------------------------------------------------------------
-  "cortex-debug.openocdPath": "/opt/homebrew/bin/openocd",
-  "cortex-debug.gdbPath": "/opt/homebrew/opt/gcc-arm-none-eabi/bin/arm-none-eabi-gdb",
+  // openocd and arm-none-eabi-gdb are resolved from PATH, which keeps this file
+  // portable across macOS / Linux / Windows. If yours are not on PATH -- or you
+  // are on Debian/Ubuntu, which ships gdb-multiarch instead of arm-none-eabi-gdb
+  // -- set these in your *User* settings rather than editing this file:
+  //   "cortex-debug.openocdPath": "/your/path/to/openocd"
+  //   "cortex-debug.gdbPath":     "/usr/bin/gdb-multiarch"
   "cortex-debug.variableUseNaturalFormat": true,
 
-  "files.associations": { "*.ld": "ld", "*.h": "c", "*.ioc": "ini" },
+  "files.associations": { "*.ld": "ld", "*.h": "c", "*.ioc": "ini", "*.cfg": "tcl" },
   "files.exclude": { "**/.DS_Store": true },
   "search.exclude": { "lib/**": true, "build/**": true, "cubemx/**": true }
 }

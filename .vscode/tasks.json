@@ -18,13 +18,13 @@
     {
       "label": "Clean",
       "type": "shell",
-      "command": "rm -rf ${workspaceFolder}/build",
+      "command": "cmake -E rm -rf build",
       "problemMatcher": []
     },
     {
       "label": "Flash (OpenOCD)",
       "type": "shell",
-      "command": "openocd -f interface/stlink.cfg -f target/stm32h7x_dual_bank.cfg -c 'program build/debug/cuis-fc.elf verify reset exit'",
+      "command": "openocd -f openocd/nucleo-h753zi.cfg -c \"program build/debug/cuis-fc.elf verify reset exit\"",
       "dependsOn": "Build (debug)",
       "problemMatcher": []
     }
