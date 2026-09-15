@@ -18,7 +18,7 @@ CubeMX is used only to regenerate clock and pin configuration.
 ## Prerequisites
 
 You need four things on `PATH`: `arm-none-eabi-gcc`, `cmake` (≥3.22), `ninja`,
-and `openocd`. Plus `arm-none-eabi-gdb` if you want to debug.
+and `openocd`. Plus `arm-none-eabi-gdb` if you wanst to debug.
 
 <details open>
 <summary><b>macOS</b></summary>
