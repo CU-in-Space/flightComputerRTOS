@@ -1,9 +1,13 @@
 # cuis-fc — STM32H753ZI + FreeRTOS
 
 Firmware scaffold for the CU InSpace flight computer, targeting an
-**STM32H753ZIT6** on a **NUCLEO-H753ZI**. It builds, flashes, and starts the
-FreeRTOS scheduler with one placeholder task at 480 MHz. **There is no
-application logic yet** — that is deliberate.
+**STM32H753ZIT6** on a **NUCLEO-H753ZI**. It builds, flashes, and runs the
+FreeRTOS scheduler at 480 MHz with a single **heartbeat task** that blinks LD1
+(green) at 1 Hz. A steady blink means the scheduler is alive; a frozen LED means
+a hang or fault.
+
+**New to this?** Read [docs/how-it-works.md](docs/how-it-works.md) first: the build
+chain, flash chain, boot sequence and code layout, explained from fundamentals.
 
 Free toolchain throughout: GNU Arm Embedded + CMake + Ninja + OpenOCD. No
 STM32CubeIDE, no STM32CubeCLT, and no ST account needed to build or flash.
@@ -138,7 +142,7 @@ openocd/nucleo-h753zi.cfg       probe + target settings
 include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
 linker/STM32H753ZI_FLASH.ld     memory map
-src/main.c                      startup ordering, scheduler, FreeRTOS hooks
+src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
 src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)
 src/gpio.c, src/usart.c         peripheral init                  (from CubeMX)
@@ -147,8 +151,8 @@ cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules
 ```
 
-`src/*.c` is globbed, so anything you copy out of CubeMX is compiled with no
-build-file edits.
+Every `.c` file under `src/`, including subfolders, is compiled automatically,
+so new modules and anything copied out of CubeMX need no build-file edits.
 
 | Submodule | Version |
 |---|---|

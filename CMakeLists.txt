@@ -55,10 +55,10 @@ target_compile_definitions(stm32cube PUBLIC ${TARGET_MCU} USE_HAL_DRIVER)
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-# Globbed so files lifted out of CubeMX (stm32h7xx_hal_msp.c, peripheral inits)
+# Globbed recursively so files lifted out of CubeMX (stm32h7xx_hal_msp.c, peripheral inits)
 # get picked up without editing this file. CONFIGURE_DEPENDS makes Ninja
 # re-glob when the directory changes.
-file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c)
+file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c)
 
 add_executable(${PROJECT_NAME}
     ${APP_SOURCES}
@@ -69,6 +69,9 @@ add_executable(${PROJECT_NAME}
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wshadow -Wdouble-promotion)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel)
+
+# Lets code in src/ subfolders include each other as "drivers/imu.h" etc.
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 target_link_options(${PROJECT_NAME} PRIVATE
     -T${LINKER_SCRIPT}

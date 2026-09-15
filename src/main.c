@@ -1,5 +1,5 @@
-/* Scaffold entry point -- brings the clocks and kernel up, and nothing else.
- * Real flight logic goes in tasks created from vStartupTask().
+/* Entry point -- brings the clocks and kernel up and starts the heartbeat.
+ * Flight logic goes in its own tasks, created here alongside the heartbeat.
  */
 #include "main.h"
 #include "system_clock.h"
@@ -9,8 +9,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-
-static void vStartupTask(void *pvParameters);
+static void vHeartbeatTask(void *pvParameters);
 
 int main(void)
 {
@@ -31,8 +30,8 @@ int main(void)
     MX_GPIO_Init();
     MX_USART3_UART_Init();
 
-    if (xTaskCreate(vStartupTask,
-                    "startup",
+    if (xTaskCreate(vHeartbeatTask,
+                    "heartbeat",
                     configMINIMAL_STACK_SIZE * 2,
                     NULL,
                     tskIDLE_PRIORITY + 1,
@@ -47,11 +46,14 @@ int main(void)
     }
 }
 
-static void vStartupTask(void *pvParameters)
+/* Toggles LD1 (green) every 500 ms. A steady 1 Hz blink means the scheduler is
+ * running; a frozen LED means something is hogging the CPU or has faulted. */
+static void vHeartbeatTask(void *pvParameters)
 {
     (void)pvParameters;
 
     for (;;) {
+        HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
