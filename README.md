@@ -90,7 +90,7 @@ VS Code extensions are recommended automatically from `.vscode/extensions.json`:
 ## Build
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules git@github.com:CU-in-Space/flightComputerRTOS.git
 cd stm32h7-freertos
 cmake --preset debug
 cmake --build --preset debug
