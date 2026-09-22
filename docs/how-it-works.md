@@ -241,6 +241,7 @@ In [`src/main.c`](../src/main.c):
 | `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz** | overwrites `SystemCoreClock` with `480000000` |
 | `MX_GPIO_Init()` | makes PB0 (LD1) an output | |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
+| `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
@@ -302,6 +303,8 @@ The most useful way to read the tree is by **who's allowed to change each file**
 ```
 src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handler
 src/stm32h7xx_it.c            fault handlers, plus peripheral interrupt handlers as you add them
+src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
+src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
 include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt priorities
 ```
 
@@ -358,6 +361,7 @@ under `src/`. Subfolders compile automatically, and `#include "drivers/imu.h"` w
 ```
 src/
   main.c                     creates the tasks, nothing else
+  libc/                      glue that makes the C library work under FreeRTOS (already exists)
   drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. No FreeRTOS.
   tasks/    sensor_task.c  log_task.c  airbrake_task.c
                              one job each: wait on a queue, do the work, pass results on
@@ -461,3 +465,4 @@ Samek's course (below) explain the reasoning and the alternatives.
 | **MSP** | MCU Support Package: the HAL hook that enables a peripheral's clock and pins |
 | **Tick** | one SysTick interrupt — 1 ms in this project |
 | **Queue** | FreeRTOS's safe way to pass data from one task (or interrupt) to another |
+| **Reentrant** | safe to run from several tasks at once, because each keeps its own state |

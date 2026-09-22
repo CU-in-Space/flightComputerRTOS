@@ -27,7 +27,7 @@
 #define configUSE_COUNTING_SEMAPHORES           1
 #define configQUEUE_REGISTRY_SIZE               8
 #define configUSE_QUEUE_SETS                    0
-#define configUSE_NEWLIB_REENTRANT              0
+#define configUSE_NEWLIB_REENTRANT              1   /* per-task C library state: see src/libc/locks.c */
 #define configENABLE_BACKWARD_COMPATIBILITY     0
 #define configNUMBER_OF_CORES                   1
 

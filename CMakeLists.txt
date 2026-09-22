@@ -13,6 +13,10 @@ set(STARTUP_SOURCE ${CMAKE_SOURCE_DIR}/lib/cmsis_device_h7/Source/Templates/gcc/
 # -Og keeps the code debuggable without the noise of -O0.
 set(CMAKE_C_FLAGS_DEBUG "-Og -g3 -ggdb")
 
+# Debug info lives only in the .elf and never reaches flash, so release builds
+# keep it too: a crash on a release build can still be debugged against its .elf.
+set(CMAKE_C_FLAGS_MINSIZEREL "-Os -g -DNDEBUG")
+
 # Let the linker drop everything nothing references.
 add_compile_options(-ffunction-sections -fdata-sections)
 

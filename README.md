@@ -17,8 +17,11 @@ CubeMX is used only to regenerate clock and pin configuration.
 
 ## Prerequisites
 
-You need four things on `PATH`: `arm-none-eabi-gcc`, `cmake` (≥3.22), `ninja`,
-and `openocd`. Plus `arm-none-eabi-gdb` if you wanst to debug.
+**Hardware:** a NUCLEO-H753ZI board and a USB cable (the onboard ST-LINK handles
+both power and flashing — no external programmer needed).
+
+**Software:** four things on `PATH`: `arm-none-eabi-gcc`, `cmake` (≥3.22),
+`ninja`, and `openocd`. Plus `arm-none-eabi-gdb` if you want to debug.
 
 <details open>
 <summary><b>macOS</b></summary>
@@ -98,7 +101,7 @@ Already cloned without submodules? `git submodule update --init --recursive`.
 | Command | Result |
 |---|---|
 | `cmake --preset debug` | Configure, `-Og -g3` |
-| `cmake --preset release` | Configure, `-Os` |
+| `cmake --preset release` | Configure, `-Os -g` |
 | `cmake --build --preset debug` | Build → `build/debug/cuis-fc.{elf,hex,bin}` |
 | `cmake --build --preset release` | Build → `build/release/…` |
 | `cmake -E rm -rf build` | Clean everything |
@@ -108,6 +111,8 @@ so there is no `make` vs `nmake` vs `msbuild` divergence. In VS Code, <kbd>⇧�
 (<kbd>Ctrl+Shift+B</kbd>) runs the debug build.
 
 Current footprint: **~21 KB flash**, ~67 KB RAM (64 KB of which is the FreeRTOS heap).
+
+---
 
 ## Flash and debug
 
@@ -129,6 +134,10 @@ enables the FreeRTOS task view.
 
 All probe settings live in [`openocd/nucleo-h753zi.cfg`](openocd/nucleo-h753zi.cfg)
 so the command above is the same on every platform.
+
+**Verify it worked:** LD1 (green) should blink once per second. A steady blink
+means the scheduler is alive; solid on, solid off, or no light at all means
+something's wrong — see Troubleshooting.
 
 ---
 
@@ -160,46 +169,6 @@ so new modules and anything copied out of CubeMX need no build-file edits.
 | `cmsis_core` | v5.9.0_20250520 |
 | `cmsis_device_h7` | v1.10.7 |
 | `stm32h7xx_hal_driver` | v1.11.6 |
-
----
-
-## Decisions worth knowing
-
-**Clock: 480 MHz.** 8 MHz HSE (bypass, from the ST-LINK MCO — the NUCLEO has no
-crystal at X3) → PLL1 `/4 ×480 /2` → 480 MHz SYSCLK, 240 MHz HCLK, 120 MHz on
-APB1–4. This needs VOS0, which needs the LDO supply — fine on this board, but it
-would be unreachable on an SMPS-supplied `-Q` variant. Regenerate from
-`cubemx/fc.ioc`; don't hand-edit `src/system_clock.c`.
-
-**RAM is AXI SRAM, not DTCM.** `.data`/`.bss`/heap/stack live in `RAM_D1`
-(0x24000000, 512 KB) rather than DTCMRAM as ST's stock script does. **The DMA
-controllers cannot reach DTCM** — the classic H7 trap where DMA silently
-transfers nothing. Starting in AXI SRAM keeps every sensor buffer valid by
-default.
-
-**FreeRTOS owns SysTick; HAL borrows it.** The kernel's `SVC`/`PendSV`/`SysTick`
-handlers are aliased onto the CMSIS vector names at the bottom of
-`FreeRTOSConfig.h`, so `HAL_IncTick()` is driven from `vApplicationTickHook()`.
-That is why `configTICK_RATE_HZ` is 1000 and must stay there. **Never define
-those three handlers in `stm32h7xx_it.c`** — including by pasting CubeMX's
-version of that file, which contains all three.
-
-**Interrupt priorities.** 4 priority bits. Any ISR calling a `...FromISR()` API
-must use a priority number **≥ 5** (`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`).
-Lower numbers are more urgent and invisible to the kernel — use them only for
-ISRs that touch no FreeRTOS API. `configASSERT` traps violations.
-
-**FreeRTOS port is `GCC_ARM_CM4F`, not CM7.** The STM32H753 is a Cortex-M7
-**r1p1**, and FreeRTOS's own `portable/GCC/ARM_CM7/ReadMe.txt` recommends the
-CM4F port for every revision except r0p1.
-
-**Caches.** I-cache on. D-cache deliberately off until there is discipline
-around `SCB_CleanDCache_by_Addr` / `SCB_InvalidateDCache_by_Addr` for DMA buffers.
-
-**Startup ordering in `main()` is load-bearing:** `MPU_Config()` →
-`SCB_EnableICache()` → `HAL_Init()` → `SystemClock_Config()`. `HAL_Init()` calls
-`HAL_MspInit()`, which enables the SYSCFG clock, which `SystemClock_Config()`
-needs before it can set the overdrive bit for VOS0.
 
 ---
 

@@ -18,7 +18,7 @@
     {
       "name": "release",
       "inherits": "base",
-      "displayName": "Release (-Os)",
+      "displayName": "Release (-Os -g)",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
     }
   ],
