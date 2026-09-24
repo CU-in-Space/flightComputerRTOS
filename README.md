@@ -17,8 +17,8 @@ CubeMX is used only to regenerate clock and pin configuration.
 
 ## Prerequisites
 
-**Hardware:** a NUCLEO-H753ZI board and a USB cable (the onboard ST-LINK handles
-both power and flashing — no external programmer needed).
+**Hardware:** a NUCLEO-H753ZI board and a USB data cable (the onboard ST-LINK
+handles both power and flashing — no external programmer needed).
 
 **Software:** four things on `PATH`: `arm-none-eabi-gcc`, `cmake` (≥3.22),
 `ninja`, and `openocd`. Plus `arm-none-eabi-gdb` if you want to debug.
@@ -40,46 +40,46 @@ sudo apt update
 sudo apt install cmake ninja-build openocd gdb-multiarch
 ```
 
-Install the **toolchain from Arm directly** rather than `apt install
-gcc-arm-none-eabi` — the distro package is usually years old and on some
-releases ships without `libnosys`, which breaks the link step:
-
+Install the **toolchain from Arm directly** 
 ```bash
-curl -LO "https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz"
-sudo tar xJf arm-gnu-toolchain-*.tar.xz -C /opt
-echo 'export PATH="/opt/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin:$PATH"' >> ~/.bashrc
+ARCH=$(uname -m)   # x86_64 on a PC, aarch64 on a Raspberry Pi / Jetson
+curl -LO "https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-$ARCH-arm-none-eabi.tar.xz"
+sudo tar xJf arm-gnu-toolchain-14.2.rel1-$ARCH-arm-none-eabi.tar.xz -C /opt
+echo "export PATH=\"/opt/arm-gnu-toolchain-14.2.rel1-$ARCH-arm-none-eabi/bin:\$PATH\"" >> ~/.bashrc
 ```
 
-Two Linux-specific notes:
+Linux-specific notes:
 - Debian/Ubuntu ship **`gdb-multiarch`**, not `arm-none-eabi-gdb`. Point
   cortex-debug at it in your VS Code *User* settings:
   `"cortex-debug.gdbPath": "/usr/bin/gdb-multiarch"`
-- Flashing as a non-root user needs a udev rule for the ST-LINK:
+- The `openocd` package already installs a udev rule
+  (`/lib/udev/rules.d/60-openocd.rules`) that gives the `plugdev` group access to
+  the ST-LINK. Make sure you're in it, and in `dialout` for the ST-LINK's serial
+  port (`/dev/ttyACM0`):
   ```bash
-  sudo cp /usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d/
-  sudo udevadm control --reload-rules && sudo udevadm trigger
+  sudo usermod -aG plugdev,dialout $USER
   ```
-  Without it OpenOCD reports `LIBUSB_ERROR_ACCESS`. Unplug and replug the board.
+  Log out and back in, then unplug and replug the board. Without this OpenOCD
+  reports `LIBUSB_ERROR_ACCESS`.
 </details>
 
 <details>
 <summary><b>Windows</b></summary>
 
 ```powershell
-winget install Kitware.CMake Ninja-build.Ninja
+winget install Kitware.CMake Ninja-build.Ninja xpack-dev-tools.openocd-xpack
 winget install Arm.GnuArmEmbeddedToolchain
 ```
 
-OpenOCD has no winget package; use [xPack OpenOCD](https://github.com/xpack-dev-tools/openocd-xpack/releases)
-or `scoop install openocd`, then add its `bin` to `PATH`.
-
 Windows-specific notes:
-- Install the **ST-LINK USB driver** ([ST's STSW-LINK009](https://www.st.com/en/development-tools/stsw-link009.html)),
-  or OpenOCD will not see the board at all.
-- Verify with `where arm-none-eabi-gcc` before building. The Arm installer has a
-  "Add path to environment variable" checkbox that is **off** by default.
-- Use PowerShell rather than `cmd`. The commands below are identical either way,
-  but the quoting in the flash command only works in PowerShell and POSIX shells.
+- **No USB driver needed** on Windows 10/11. The NUCLEO-H753ZI's STLINK-V3
+  carries its own WinUSB descriptors, so Windows sets it up on first plug-in.
+  (ST's STSW-LINK009 driver is only required for older ST-LINK/V2 probes or
+  Windows 7/8.)
+- Open a **new** terminal after installing, then check that `where
+  arm-none-eabi-gcc` and `where openocd` both find something. The Arm installer
+  has an "Add path to environment variable" checkbox that is **off** by default;
+  if `where` comes up empty, add its `bin` folder to `PATH` by hand.
 </details>
 
 VS Code extensions are recommended automatically from `.vscode/extensions.json`:
@@ -91,7 +91,7 @@ VS Code extensions are recommended automatically from `.vscode/extensions.json`:
 
 ```bash
 git clone --recurse-submodules git@github.com:CU-in-Space/flightComputerRTOS.git
-cd stm32h7-freertos
+cd flightComputerRTOS
 cmake --preset debug
 cmake --build --preset debug
 ```
@@ -110,7 +110,8 @@ Identical on all three platforms — the presets pin Ninja and the toolchain fil
 so there is no `make` vs `nmake` vs `msbuild` divergence. In VS Code, <kbd>⇧⌘B</kbd>
 (<kbd>Ctrl+Shift+B</kbd>) runs the debug build.
 
-Current footprint: **~21 KB flash**, ~67 KB RAM (64 KB of which is the FreeRTOS heap).
+Every build ends by printing how much flash and RAM it uses. Most of the RAM is
+the FreeRTOS heap (`configTOTAL_HEAP_SIZE`).
 
 ---
 
@@ -120,12 +121,11 @@ Current footprint: **~21 KB flash**, ~67 KB RAM (64 KB of which is the FreeRTOS 
 cmake --build --preset debug --target flash
 ```
 
-This prefers **STM32CubeProgrammer** (found automatically if you have STM32CubeIDE
-or STM32CubeCLT installed) and falls back to OpenOCD otherwise. Prefer it over
-calling OpenOCD directly: OpenOCD 0.12.0 cannot reliably flash an STM32H7 through
-an ST-LINK **V3** — see Troubleshooting. Debugging over OpenOCD is unaffected.
+This runs OpenOCD, which erases, programs, verifies (`** Verified OK **`) and
+resets the board. It is the same on every platform, and the same OpenOCD config
+is used for debugging.
 
-A third option needs no tools at all: the NUCLEO mounts as a USB drive
+Another option needs no tools at all: the NUCLEO mounts as a USB drive
 (`NOD_H753ZI`), and copying `build/debug/cuis-fc.bin` onto it flashes the board.
 Handy for getting a build onto someone's board quickly; no verification, no debug.
 
@@ -134,10 +134,6 @@ enables the FreeRTOS task view.
 
 All probe settings live in [`openocd/nucleo-h753zi.cfg`](openocd/nucleo-h753zi.cfg)
 so the command above is the same on every platform.
-
-**Verify it worked:** LD1 (green) should blink once per second. A steady blink
-means the scheduler is alive; solid on, solid off, or no light at all means
-something's wrong — see Troubleshooting.
 
 ---
 
@@ -184,16 +180,28 @@ so new modules and anything copied out of CubeMX need no build-file edits.
    enumerated but non-functional -- the giveaway is that the `NOD_H753ZI` drive
    stops appearing under `/Volumes` (macOS) or in your file manager.
 
+**`mode (transport) not supported by device`, `init mode failed (unable to connect
+to the target)`, `LIBUSB_ERROR_OTHER`, or the `NOD_H753ZI` drive vanishing
+mid-copy** — **try a different USB cable first.** A marginal cable produced every
+one of these during bring-up, on both OpenOCD and STM32CubeProgrammer, and they
+disappeared with a new cable. Other telltales: the probe shows up with a missing
+or garbled serial number (`system_profiler SPUSBHostDataType` on macOS, `lsusb -v`
+on Linux), or the `NOD_H753ZI` drive never mounts. Plug straight into the
+computer, not through a hub or dongle.
+
 **`jtag status contains invalid mode value - communication failure`** during
-programming — the SWD link dropped mid-write, usually because firmware already
-on the chip changed the clocks or entered low power while OpenOCD was attaching.
-`openocd/nucleo-h753zi.cfg` handles this with `connect_assert_srst` and a
-1.8 MHz adapter speed. If it still fails, hold the black **RESET** button while
-the flash command starts, or drop `adapter speed` to `480`.
+programming — the SWD link dropped mid-write. Check the cable first (above).
+Otherwise firmware already on the chip may have changed the clocks or entered low
+power while OpenOCD was attaching: hold the black **RESET** button while the flash
+command starts, or drop `adapter speed` in `openocd/nucleo-h753zi.cfg` to `480`.
 
-**`LIBUSB_ERROR_ACCESS` (Linux)** — missing udev rule; see the Linux section.
+**`LIBUSB_ERROR_ACCESS` (Linux)** — you're not in the `plugdev` group, or haven't
+logged out and back in since joining it; see the Linux section.
 
-**OpenOCD sees no board (Windows)** — missing ST-LINK driver (STSW-LINK009).
+**OpenOCD sees no board (Windows)** — check that the probe shows up in Device
+Manager with no warning icon. If not, try another cable (above). If a tool such as
+Zadig has replaced the ST-LINK's driver, uninstall that device in Device Manager
+(tick "delete the driver") and replug to get the built-in WinUSB driver back.
 
 **Only 1 MB of flash visible** — you are using `target/stm32h7x.cfg` instead of
 the dual-bank config. Use `openocd/nucleo-h753zi.cfg`.
@@ -206,13 +214,3 @@ the pinned `stm32h7xx_hal_driver`. Bump the submodule tag.
 
 ---
 
-## Before this flies
-
-- [x] Silicon revision confirmed **rev V** on the club NUCLEO (2026-09-14), so 480 MHz
-      is in spec. Check any new board: STM32CubeProgrammer prints `Revision ID` on
-      connect. Rev Y caps at 400 MHz — set `PLLN` to 400 and voltage scale 1.
-- [ ] Drop `STM32H753.svd` into `debug/` and uncomment `svdFile` in
-      `.vscode/launch.json` for named peripheral registers while debugging.
-- [ ] Revisit `configTOTAL_HEAP_SIZE` (currently 64 KB) once the task set is real.
-- [ ] Retarget `_write()` to USART3 if you want `printf` over the ST-LINK VCP
-      (115200 8N1 on PD8/PD9).

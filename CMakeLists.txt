@@ -100,32 +100,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 # ---------------------------------------------------------------------------
 # Flashing:  cmake --build --preset debug --target flash
 #
-# Prefers STM32CubeProgrammer. OpenOCD 0.12.0 cannot reliably flash an STM32H7
-# through an ST-LINK V3 (it fails to assert reset; see openocd/nucleo-h753zi.cfg),
-# so it is only the fallback. OpenOCD remains the debug server either way.
+# OpenOCD on every platform, with the same probe settings the debugger uses
+# (openocd/nucleo-h753zi.cfg). Erases, programs, verifies, then resets.
 # ---------------------------------------------------------------------------
-file(GLOB CUBEPROG_HINTS
-    "/Applications/STM32CubeIDE.app/Contents/Eclipse/plugins/com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.*/tools/bin"
-    "/Applications/STMicroelectronics/STM32Cube/STM32CubeProgrammer/STM32CubeProgrammer.app/Contents/MacOs/bin"
-    "$ENV{HOME}/st/stm32cubeclt*/STM32CubeProgrammer/bin"
-    "/opt/st/stm32cubeclt*/STM32CubeProgrammer/bin"
-    "C:/Program Files/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin"
-)
-find_program(STM32_PROGRAMMER_CLI STM32_Programmer_CLI HINTS ${CUBEPROG_HINTS})
-
-if(STM32_PROGRAMMER_CLI)
-    message(STATUS "Flash tool: ${STM32_PROGRAMMER_CLI}")
-    add_custom_target(flash
-        COMMAND ${STM32_PROGRAMMER_CLI} -c port=SWD mode=UR reset=HWrst
-                -w $<TARGET_FILE:${PROJECT_NAME}> -v -rst
-        USES_TERMINAL
-        COMMENT "Flashing via STM32CubeProgrammer")
-else()
-    message(STATUS "Flash tool: openocd (STM32_Programmer_CLI not found)")
-    add_custom_target(flash
-        COMMAND openocd -f ${CMAKE_SOURCE_DIR}/openocd/nucleo-h753zi.cfg
-                -c "program $<TARGET_FILE:${PROJECT_NAME}> verify reset exit"
-        USES_TERMINAL
-        COMMENT "Flashing via OpenOCD")
-endif()
+add_custom_target(flash
+    COMMAND openocd -f ${CMAKE_SOURCE_DIR}/openocd/nucleo-h753zi.cfg
+            -c "program $<TARGET_FILE:${PROJECT_NAME}> verify reset exit"
+    USES_TERMINAL
+    COMMENT "Flashing via OpenOCD")
 add_dependencies(flash ${PROJECT_NAME})

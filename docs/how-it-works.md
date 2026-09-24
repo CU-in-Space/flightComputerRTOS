@@ -2,8 +2,9 @@
 
 A from-the-ground-up tour of this project: how C source becomes bytes in the
 chip's flash, how those bytes get onto the board, what happens between power-on
-and the blinking LED, and where everything lives. Every number here comes from
-this project's real build.
+and the blinking LED, and where everything lives. Sizes and code addresses change
+with every build, so they're left out: the build prints flash and RAM usage at the
+end of every link, and `build/debug/cuis-fc.map` has the details.
 
 1. [The build chain](#1-the-build-chain)
 2. [The flash chain](#2-the-flash-chain)
@@ -21,7 +22,7 @@ this project's real build.
      │               │                     │
      └──────── ① compile (arm-none-eabi-gcc) ──────┐
                                                    ▼
-                                     138 × .obj   machine code, addresses not yet known
+                                     .obj files   machine code, addresses not yet known
                                                    │
                                   ② archive        HAL → libstm32cube.a, kernel → libfreertos_kernel.a
                                                    │
@@ -35,9 +36,10 @@ this project's real build.
 
 ### Cross-compiling
 
-Your laptop runs macOS on its own CPU. The STM32H753 is an Arm **Cortex-M7**: a
+Your computer (Mac, Linux or Windows) runs a full operating system on its own
+CPU. The STM32H753 is an Arm **Cortex-M7**: a
 different instruction set, and **no operating system at all**. So we need a
-*cross-compiler* — one that runs on your laptop but produces code for the chip:
+*cross-compiler* — one that runs on your computer but produces code for the chip:
 `arm-none-eabi-gcc`.
 
 | Part of the name | Meaning |
@@ -83,8 +85,8 @@ here later".
 Two `-D` defines steer ST's headers: `STM32H753xx` selects this exact chip's
 register map, and `USE_HAL_DRIVER` enables the HAL.
 
-This build produces **138 objects**: 122 from ST's HAL and CMSIS, 9 from the
-FreeRTOS kernel, and 7 of ours (6 `.c` files plus the startup assembly).
+Every file becomes one object: ST's HAL and CMSIS, the FreeRTOS kernel, and ours
+(every `.c` file under `src/` plus the startup assembly).
 
 `-ffunction-sections -fdata-sections` puts every function and variable in its own
 named section. That pays off in step ③.
@@ -112,42 +114,42 @@ chooses. A microcontroller has fixed physical memory, so *you* choose, in
 0x2400_0000   RAM_D1   512 KB   AXI SRAM, wiped at power-off — variables live here
 ```
 
-The chip has other, smaller RAM regions we don't use yet — the README's "Decisions
-worth knowing" section explains why not DTCM.
+The chip has other, smaller RAM regions we don't use yet. The comment at the top
+of the linker script explains why not DTCM: the DMA controllers can't reach it.
 
 The compiler sorts everything into **sections**. The linker script says which
 memory each section goes into:
 
-| Section | Contains | Goes to | This build |
-|---|---|---|---|
-| `.isr_vector` | the vector table ([§3](#reset-the-cpu-reads-two-numbers)) | FLASH, **first** | 664 B |
-| `.text` | machine code | FLASH | 20,280 B |
-| `.rodata` | constants, string literals | FLASH | 96 B |
-| `.data` | variables with a starting value | RAM — **but the starting values are stored in FLASH** | 20 B |
-| `.bss` | variables that start at zero | RAM | 66,176 B |
+| Section | Contains | Goes to |
+|---|---|---|
+| `.isr_vector` | the vector table ([§3](#reset-the-cpu-reads-two-numbers)) | FLASH, **first** |
+| `.text` | machine code | FLASH |
+| `.rodata` | constants, string literals | FLASH |
+| `.data` | variables with a starting value | RAM — **but the starting values are stored in FLASH** |
+| `.bss` | variables that start at zero | RAM |
 
 `.data` is the subtle one. Take `uint32_t SystemCoreClock = 64000000;`. RAM is
 blank at power-on, so that `64000000` has to be stored in flash, and something has
 to copy it into RAM before `main()` runs. That something is the startup code in
 [§3](#reset_handler-making-c-possible).
 
-`.bss` is 66 KB almost entirely because of `ucHeap`, the 64 KB pool FreeRTOS hands
-memory out from (`configTOTAL_HEAP_SIZE`).
+`.bss` is mostly `ucHeap`, the pool FreeRTOS hands memory out from. Its size is
+set by `configTOTAL_HEAP_SIZE`.
 
 **Garbage collection.** `-Wl,--gc-sections` discards every section nothing
-references. That's why compiling all 122 HAL files costs nothing: only the HAL
-functions we actually call survive, and the whole program is about 21 KB.
+references. That's why compiling all of ST's HAL costs nothing: only the HAL
+functions we actually call survive into the final program.
 
 ### ④ The output files
 
-| File | Size | What it is | Used by |
-|---|---|---|---|
-| `cuis-fc.elf` | 2.6 MB | code + addresses + **debug info** (names, line numbers, types) | the flasher and the debugger |
-| `cuis-fc.bin` | 21 KB | exactly the bytes that go into flash, nothing else | drag-and-drop onto the `NOD_H753ZI` drive |
-| `cuis-fc.hex` | 59 KB | the same bytes written as text, with addresses | some programming tools |
-| `cuis-fc.map` | 660 KB | the linker's report of where everything landed | you, when asking "why is my binary so big?" |
+| File | What it is | Used by |
+|---|---|---|
+| `cuis-fc.elf` | code + addresses + **debug info** (names, line numbers, types) | the flasher and the debugger |
+| `cuis-fc.bin` | exactly the bytes that go into flash, nothing else | drag-and-drop onto the `NOD_H753ZI` drive |
+| `cuis-fc.hex` | the same bytes written as text, with addresses | some programming tools |
+| `cuis-fc.map` | the linker's report of where everything landed | you, when asking "why is my binary so big?" |
 
-The `.elf` is over 100× the size of the `.bin`. Almost all of that is debug info,
+The `.elf` is many times larger than the `.bin`. Almost all of that is debug info,
 and none of it reaches the chip.
 
 ---
@@ -155,29 +157,29 @@ and none of it reaches the chip.
 ## 2. The flash chain
 
 ```
- laptop ──USB──▶ ST-LINK V3 ──SWD, 2 wires──▶ STM32H753 debug port ──▶ flash controller ──▶ FLASH @ 0x0800_0000
-                 a second MCU
-                 on the NUCLEO
+ computer ──USB──▶ ST-LINK V3 ──SWD, 2 wires──▶ STM32H753 debug port ──▶ flash controller ──▶ FLASH @ 0x0800_0000
+                   a second MCU
+                   on the NUCLEO
 ```
 
 **The ST-LINK** is a *second* microcontroller on the NUCLEO board. Its only job is
-translating USB commands from your laptop into SWD.
+translating USB commands from your computer into SWD.
 
 **SWD** (Serial Wire Debug) is a two-wire interface, `SWDIO` and `SWCLK`, into a
 debug port built into every Cortex-M. Through it a debugger can halt the CPU, step
 it, and **read or write any address**. That's how we checked the firmware without
-adding any code: reading address `0x24000004` returned `SystemCoreClock =
-480000000`, and reading `0x58020414` showed the LED pin toggling.
+adding any code: reading `SystemCoreClock` from RAM returned `480000000`, and
+reading the GPIOB output register at `0x58020414` showed the LED pin toggling.
 
 **Flash is not RAM.** You can't simply write bytes to `0x08000000`. The chip's
 flash controller has to be unlocked, the sectors erased (every bit becomes 1),
 then programmed (bits set to 0), then relocked. Programming tools know this
 sequence for each chip.
 
-What `cmake --build --preset debug --target flash` does, using STM32CubeProgrammer:
+What `cmake --build --preset debug --target flash` does, using OpenOCD:
 
-1. **Connect under reset**: hold the H753 in reset so whatever firmware is already
-   running can't interfere with the debug link
+1. **Reset and halt**: pulse the H753's reset line and stop the CPU before it runs
+   anything, so whatever firmware is already on the chip can't interfere
 2. **Erase** the flash sectors the new image needs
 3. **Program** the parts of the `.elf` that belong in flash
 4. **Verify**: read everything back and compare
@@ -186,11 +188,14 @@ What `cmake --build --preset debug --target flash` does, using STM32CubeProgramm
 **Debugging uses the same two wires.** Pressing F5 in VS Code starts OpenOCD,
 which talks SWD through the ST-LINK and runs a GDB server on port 3333. VS Code's
 cortex-debug extension talks to that server. The `.elf`'s debug info is what lets
-it show you `vHeartbeatTask` instead of `0x080003F8`.
+it show you `vHeartbeatTask` instead of a bare hex address.
 
 Every link in this chain failed at least once during bring-up: a USB cable that
 couldn't sustain long transfers, ST-LINK firmware stuck in its bootloader, and a
-leftover `stlink-server` process holding the probe. See README → Troubleshooting.
+leftover `stlink-server` process holding the probe. The bad cable was the most
+misleading: its errors looked exactly like an OpenOCD bug, and ST's own tool
+failed the same way. If flashing fails, swap the cable first. See README →
+Troubleshooting.
 
 ---
 
@@ -202,10 +207,10 @@ A Cortex-M doesn't "start at `main`". On reset, the CPU reads the first two 32-b
 values in flash. These are the start of the **vector table**, which is why
 `.isr_vector` must be placed first:
 
-| Address | Value in this build | Meaning |
+| Address | Value | Meaning |
 |---|---|---|
 | `0x0800_0000` | `0x2408_0000` | initial stack pointer: the top of AXI SRAM (`_estack` in the linker script) |
-| `0x0800_0004` | `0x0800_06E9` | address of `Reset_Handler`. The low bit is set to mean "Thumb code" |
+| `0x0800_0004` | `Reset_Handler` + 1 | wherever `Reset_Handler` landed in flash. The low bit is set to mean "Thumb code" |
 
 The rest of the table holds the address of every interrupt handler — SysTick,
 USART3, DMA, and so on.
@@ -243,6 +248,7 @@ In [`src/main.c`](../src/main.c):
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
+| `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
 ### The scheduler: how the LED actually blinks
@@ -264,12 +270,13 @@ for (;;) {
 ```
 
 `vTaskDelay` is the core idea of an RTOS: **it doesn't spin in a loop**. It tells
-the kernel "wake me in 500 ticks" and gives up the CPU. With nothing else to run,
-the kernel runs its built-in idle task. After 500 ticks the heartbeat is ready
+the kernel "wake me in 500 ticks" and gives up the CPU. The two stub tasks do the
+same, so most of the time every task is asleep and the kernel runs its built-in
+idle task. After 500 ticks the heartbeat is ready
 again, flips the pin, and sleeps again.
 
-When you add a sensor task, *it* gets the CPU during those 500 ms instead of the
-idle task. That's how multiple jobs share one CPU.
+Once the state estimation task does real work, *it* gets the CPU during those
+500 ms instead of the idle task. That's how multiple jobs share one CPU.
 
 ---
 
@@ -305,6 +312,7 @@ src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handle
 src/stm32h7xx_it.c            fault handlers, plus peripheral interrupt handlers as you add them
 src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
+src/tasks/                    one file per task: state estimation and airbrake (stubs for now)
 include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt priorities
 ```
 
@@ -354,17 +362,18 @@ cubemx/ (except fc.ioc)       CubeMX's scratch project
 
 ### How to lay out code as it grows
 
-Today everything fits in `main.c`. Once sensors, logging and airbrake control
-arrive, a common, proven shape is three kinds of module, each in its own folder
-under `src/`. Subfolders compile automatically, and `#include "drivers/imu.h"` works.
+Today there's `main.c` plus two stub tasks in `src/tasks/`. Once sensors, logging
+and airbrake control arrive, a common, proven shape is three kinds of module, each
+in its own folder under `src/`. Subfolders compile automatically, and `#include "drivers/imu.h"` works.
 
 ```
 src/
   main.c                     creates the tasks, nothing else
   libc/                      glue that makes the C library work under FreeRTOS (already exists)
   drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. No FreeRTOS.
-  tasks/    sensor_task.c  log_task.c  airbrake_task.c
+  tasks/    state_estimation_task.c  airbrake_task.c  log_task.c
                              one job each: wait on a queue, do the work, pass results on
+                             (the first two exist as stubs)
   app/      flight_state.c  airbrake_control.c
                              pure logic: no HAL, no FreeRTOS
 ```
@@ -372,8 +381,8 @@ src/
 Data then moves between tasks like this:
 
 ```
- IMU interrupt ─notify─▶ sensor_task ──queue──▶ airbrake_task ─▶ PWM to servo
-                              └────────queue──▶ log_task ─▶ storage
+ IMU interrupt ─notify─▶ state_estimation_task ──queue──▶ airbrake_task ─▶ PWM to servo
+                                       └────────queue──▶ log_task ─▶ storage
 ```
 
 Three rules make it work:
@@ -384,7 +393,7 @@ Three rules make it work:
    global while another reads it is the classic RTOS bug. It passes on the bench and
    fails at random.
 3. **Keep `app/` free of HAL and FreeRTOS.** Then the flight logic — the code that
-   matters most — also compiles on your laptop, where you can test it against
+   matters most — also compiles on your computer, where you can test it against
    recorded flight data without a board.
 
 Treat this as a starting point, not a law. *Making Embedded Systems* and Miro
