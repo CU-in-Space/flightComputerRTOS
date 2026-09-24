@@ -1,0 +1,71 @@
+{
+  // Type the prefix in a .c file and press Tab. Patterns match src/main.c.
+
+  "HAL call, check result": {
+    "scope": "c",
+    "prefix": "halok",
+    "body": [
+      "if (${1:HAL_Function}(${2:&handle}${3}) != HAL_OK) {",
+      "    Error_Handler();",
+      "}$0"
+    ],
+    "description": "Call a HAL function and trap on anything but HAL_OK"
+  },
+
+  "FreeRTOS task": {
+    "scope": "c",
+    "prefix": "rtostask",
+    "body": [
+      "void v${1:Name}Task(void *pvParameters)",
+      "{",
+      "    (void)pvParameters;",
+      "",
+      "    for (;;) {",
+      "        $0",
+      "        vTaskDelay(pdMS_TO_TICKS(${2:100}));",
+      "    }",
+      "}"
+    ],
+    "description": "Task function skeleton (put it in src/tasks/)"
+  },
+
+  "Create a FreeRTOS task": {
+    "scope": "c",
+    "prefix": "xtaskcreate",
+    "body": [
+      "if (xTaskCreate(v${1:Name}Task,",
+      "                \"${2:name}\",",
+      "                configMINIMAL_STACK_SIZE * ${3:4},",
+      "                NULL,",
+      "                tskIDLE_PRIORITY + ${4:1},",
+      "                NULL) != pdPASS) {",
+      "    Error_Handler();",
+      "}$0"
+    ],
+    "description": "xTaskCreate with the same error handling as main.c"
+  },
+
+  "HAL MSP init": {
+    "scope": "c",
+    "prefix": "mspinit",
+    "body": [
+      "/* Called by HAL_${1:ADC}_Init() the first time a handle is initialised.",
+      " * The name must match exactly: it overrides the HAL's empty __weak default. */",
+      "void HAL_${1:ADC}_MspInit(${2:ADC}_HandleTypeDef *h${3:adc})",
+      "{",
+      "    GPIO_InitTypeDef GPIO_InitStruct = {0};",
+      "",
+      "    if (h${3:adc}->Instance == ${4:ADC1}) {",
+      "        /* peripheral clock, then pin clocks */",
+      "        $0",
+      "",
+      "        GPIO_InitStruct.Pin = ${5:GPIO_PIN_6};",
+      "        GPIO_InitStruct.Mode = ${6:GPIO_MODE_ANALOG};",
+      "        GPIO_InitStruct.Pull = GPIO_NOPULL;",
+      "        HAL_GPIO_Init(${7:GPIOA}, &GPIO_InitStruct);",
+      "    }",
+      "}"
+    ],
+    "description": "Peripheral MSP init (clocks + pins) that overrides the HAL's weak default"
+  }
+}

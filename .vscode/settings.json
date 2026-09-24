@@ -11,19 +11,40 @@
     "--compile-commands-dir=${workspaceFolder}/build/debug",
     "--query-driver=**/arm-none-eabi-*",
     "--header-insertion=never",
-    "--background-index"
+    "--background-index",
+    // Show every parameter of a completion (HAL functions take a lot of them).
+    "--completion-style=detailed"
   ],
+
+  // ST's STM32 VS Code extensions, if installed, start a second clangd and
+  // rewrite IntelliSense settings for projects they think they own. This
+  // project is plain CMake + clangd, so switch those parts off here. Harmless
+  // if the extensions aren't installed.
+  "stm32cube-ide-clangd.enable": false,
+  "stm32cube-ide-build-cmake.intellisense.enableAutomaticConfiguration": false,
+  "stm32cube-ide-build-cmake.ignoreCubeProjectDiscovery": true,
 
   // --- Debug --------------------------------------------------------------
   // openocd and arm-none-eabi-gdb are resolved from PATH, which keeps this file
-  // portable across macOS / Linux / Windows. If yours are not on PATH -- or you
-  // are on Debian/Ubuntu, which ships gdb-multiarch instead of arm-none-eabi-gdb
-  // -- set these in your *User* settings rather than editing this file:
+  // portable. Debian/Ubuntu ship gdb-multiarch instead (see README), so use it
+  // there. If your tools live elsewhere, override in your *User* settings:
   //   "cortex-debug.openocdPath": "/your/path/to/openocd"
-  //   "cortex-debug.gdbPath":     "/usr/bin/gdb-multiarch"
+  //   "cortex-debug.gdbPath":     "/your/path/to/arm-none-eabi-gdb"
+  "cortex-debug.gdbPath.linux": "gdb-multiarch",
   "cortex-debug.variableUseNaturalFormat": true,
 
-  "files.associations": { "*.ld": "ld", "*.h": "c", "*.ioc": "ini", "*.cfg": "tcl" },
+  "files.associations": { "*.ld": "ld", "*.h": "c", "*.ioc": "ini", "*.cfg": "tcl", "*.svd": "xml" },
   "files.exclude": { "**/.DS_Store": true },
-  "search.exclude": { "lib/**": true, "build/**": true, "cubemx/**": true }
+
+  // The HAL stays searchable: each lib/stm32h7xx_hal_driver/Src/*.c file opens
+  // with a "How to use this driver" guide worth grepping. The rest of lib/ is
+  // mostly other chips and other CPUs; go-to-definition still reaches it.
+  "search.exclude": {
+    "build/**": true,
+    "cubemx/**": true,
+    "debug/*.svd": true,
+    "lib/cmsis_core/**": true,
+    "lib/cmsis_device_h7/**": true,
+    "lib/FreeRTOS-Kernel/portable/**": true
+  }
 }

@@ -15,11 +15,14 @@
       "runToEntryPoint": "main",
       // Gives the debugger a task list instead of a single bare thread.
       "rtos": "FreeRTOS",
+      // Named peripheral registers (ADC1->CR, GPIOB->ODR, ...) in the
+      // XPERIPHERALS view. See debug/README.md.
+      "svdFile": "${workspaceFolder}/debug/STM32H753.svd",
+      // Variables added to the LIVE WATCH view keep updating while the
+      // target runs -- handy for ADC readings or task state without halting.
+      "liveWatch": { "enabled": true, "samplesPerSecond": 4 },
       "preLaunchTask": "Build (debug)",
       "showDevDebugOutput": "none"
-      // Drop STM32H753.svd into debug/ and uncomment for named peripheral
-      // registers in the CORTEX PERIPHERALS view:
-      // "svdFile": "${workspaceFolder}/debug/STM32H753.svd"
     },
     {
       "name": "Attach (OpenOCD + ST-Link)",
@@ -32,7 +35,10 @@
       "configFiles": [
         "${workspaceFolder}/openocd/nucleo-h753zi.cfg"
       ],
-      "rtos": "FreeRTOS"
+      "rtos": "FreeRTOS",
+      "svdFile": "${workspaceFolder}/debug/STM32H753.svd",
+      "liveWatch": { "enabled": true, "samplesPerSecond": 4 },
+      "showDevDebugOutput": "none"
     }
   ]
 }

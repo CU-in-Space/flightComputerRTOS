@@ -48,6 +48,7 @@
 #define configGENERATE_RUN_TIME_STATS           0
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    0
+#define configRECORD_STACK_HIGH_ADDRESS         1   /* lets VS Code's RTOS view show stack size and peak use */
 
 /* ---------------------------------------------------------------- coroutine */
 #define configUSE_CO_ROUTINES                   0

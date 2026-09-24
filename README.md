@@ -49,9 +49,8 @@ echo "export PATH=\"/opt/arm-gnu-toolchain-14.2.rel1-$ARCH-arm-none-eabi/bin:\$P
 ```
 
 Linux-specific notes:
-- Debian/Ubuntu ship **`gdb-multiarch`**, not `arm-none-eabi-gdb`. Point
-  cortex-debug at it in your VS Code *User* settings:
-  `"cortex-debug.gdbPath": "/usr/bin/gdb-multiarch"`
+- Debian/Ubuntu ship **`gdb-multiarch`**, not `arm-none-eabi-gdb`. The
+  workspace settings already point VS Code's debugger at it on Linux.
 - The `openocd` package already installs a udev rule
   (`/lib/udev/rules.d/60-openocd.rules`) that gives the `plugdev` group access to
   the ST-LINK. Make sure you're in it, and in `dialout` for the ST-LINK's serial
@@ -83,7 +82,9 @@ Windows-specific notes:
 </details>
 
 VS Code extensions are recommended automatically from `.vscode/extensions.json`:
-`cmake-tools`, `clangd`, `cortex-debug`, and the `mcu-debug` views.
+`cmake-tools`, `clangd`, `cortex-debug`, and the `mcu-debug` views. If you also
+have ST's STM32 extensions installed, the workspace settings switch off their
+duplicate clangd and automatic IntelliSense setup for this project.
 
 ---
 
@@ -129,8 +130,22 @@ Another option needs no tools at all: the NUCLEO mounts as a USB drive
 (`NOD_H753ZI`), and copying `build/debug/cuis-fc.bin` onto it flashes the board.
 Handy for getting a build onto someone's board quickly; no verification, no debug.
 
-Or press <kbd>F5</kbd> in VS Code — that builds, flashes, breaks at `main`, and
-enables the FreeRTOS task view.
+Or press <kbd>F5</kbd> in VS Code — that builds, flashes and breaks at `main`.
+While debugging:
+
+- **XPERIPHERALS** shows every peripheral register by name (`ADC1 → CR → ADEN`…),
+  from [`debug/STM32H753.svd`](debug/README.md). The quickest way to check what a
+  HAL call actually did to the hardware.
+- **RTOS** lists every FreeRTOS task with its state, priority, and stack size and
+  peak use.
+- **LIVE WATCH** keeps updating expressions while the chip runs (right-click a
+  variable → *Add to Live Watch*), so you can watch a sensor reading without
+  halting.
+
+The other everyday actions are VS Code tasks (*Terminal → Run Task*): **Flash
+(debug)**, **Flash (release)**, **Reset board** and **Clean**. Snippets for the
+repeated patterns — `halok`, `rtostask`, `xtaskcreate`, `mspinit` — live in
+`.vscode/stm32.code-snippets`.
 
 All probe settings live in [`openocd/nucleo-h753zi.cfg`](openocd/nucleo-h753zi.cfg)
 so the command above is the same on every platform.
@@ -144,6 +159,7 @@ CMakeLists.txt                  build definition
 CMakePresets.json               debug / release presets
 cmake/arm-none-eabi-gcc.cmake   toolchain file (CPU flags live here)
 openocd/nucleo-h753zi.cfg       probe + target settings
+debug/STM32H753.svd             register map for the debugger's peripheral view
 include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
 linker/STM32H753ZI_FLASH.ld     memory map
