@@ -65,20 +65,38 @@ Linux-specific notes:
 <details>
 <summary><b>Windows</b></summary>
 
+Install each tool with `winget` from PowerShell:
+
 ```powershell
-winget install Kitware.CMake Ninja-build.Ninja xpack-dev-tools.openocd-xpack
-winget install Arm.GnuArmEmbeddedToolchain
+winget install Kitware.CMake                  # CMake: generates the build
+winget install Ninja-build.Ninja              # Ninja: runs the build
+winget install Arm.GnuArmEmbeddedToolchain    # arm-none-eabi-gcc + gdb
+winget install xpack-dev-tools.openocd-xpack  # OpenOCD: flashing and debugging
 ```
+
+CMake installs for all users, so Windows asks for administrator approval, and it
+adds itself to `PATH`. Prefer a manual install? Download the Windows x64
+installer (`.msi`) from [cmake.org/download](https://cmake.org/download/) and
+pick **"Add CMake to the system PATH"** during setup. Any CMake 3.22 or newer
+works.
 
 Windows-specific notes:
 - **No USB driver needed** on Windows 10/11. The NUCLEO-H753ZI's STLINK-V3
   carries its own WinUSB descriptors, so Windows sets it up on first plug-in.
   (ST's STSW-LINK009 driver is only required for older ST-LINK/V2 probes or
   Windows 7/8.)
-- Open a **new** terminal after installing, then check that `where
-  arm-none-eabi-gcc` and `where openocd` both find something. The Arm installer
-  has an "Add path to environment variable" checkbox that is **off** by default;
-  if `where` comes up empty, add its `bin` folder to `PATH` by hand.
+- Open a **new** terminal after installing, and fully quit and reopen VS Code:
+  `PATH` changes only reach programs started afterwards. Then check that all four
+  are found:
+  ```powershell
+  cmake --version
+  ninja --version
+  arm-none-eabi-gcc --version
+  openocd --version
+  ```
+  If one isn't found, add its `bin` folder to `PATH` by hand. The usual culprit is
+  the Arm toolchain: its installer has an "Add path to environment variable"
+  checkbox that is **off** by default.
 </details>
 
 VS Code extensions are recommended automatically from `.vscode/extensions.json`:
@@ -210,6 +228,18 @@ programming — the SWD link dropped mid-write. Check the cable first (above).
 Otherwise firmware already on the chip may have changed the clocks or entered low
 power while OpenOCD was attaching: hold the black **RESET** button while the flash
 command starts, or drop `adapter speed` in `openocd/nucleo-h753zi.cfg` to `480`.
+
+**`arm-none-eabi-gcc was not found on PATH or in the usual install folders`** —
+CMake can't see the compiler. Run `arm-none-eabi-gcc --version` in a new terminal:
+if that fails too, the toolchain isn't on `PATH` (see your platform's install
+notes). If it works there but not in VS Code, quit VS Code completely and reopen
+it. Then delete `build/` and configure again. As a last resort, point CMake at the
+compiler directly: `cmake --preset debug -DARM_GCC=<full path to arm-none-eabi-gcc>`.
+
+**`The CMAKE_C_COMPILER: … is not a full path to an existing compiler tool`
+(Windows)** — an older version of `cmake/arm-none-eabi-gcc.cmake` dropped the
+`.exe` from the compiler's path. Pull the latest code, delete `build/`, and
+configure again.
 
 **`LIBUSB_ERROR_ACCESS` (Linux)** — you're not in the `plugdev` group, or haven't
 logged out and back in since joining it; see the Linux section.

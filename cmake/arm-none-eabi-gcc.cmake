@@ -16,20 +16,34 @@ set(TOOLCHAIN_PREFIX arm-none-eabi-)
 # on PATH. (That happened: macOS 27 dropped Rosetta, and the old x86-only
 # Homebrew gcc-arm-none-eabi formula won over the working native toolchain.)
 file(GLOB ARM_TOOLCHAIN_DIRS
-    "/Applications/ArmGNUToolchain/*/arm-none-eabi/bin"           # macOS cask
-    "/opt/arm-gnu-toolchain-*/bin"                                 # Linux tarball
-    "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/*/bin"  # Windows
-    "C:/Program Files/Arm GNU Toolchain arm-none-eabi/*/bin")
+    "/Applications/ArmGNUToolchain/*/arm-none-eabi/bin"             # macOS cask
+    "/opt/arm-gnu-toolchain-*/bin"                                   # Linux tarball
+    "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/*/bin"   # Windows (winget / Arm installer)
+    "C:/Program Files/Arm GNU Toolchain arm-none-eabi/*/bin"
+    "C:/Program Files (x86)/Arm/GNU Toolchain *arm-none-eabi/bin"   # Windows, other Arm installer layouts
+    "C:/Program Files/Arm/GNU Toolchain *arm-none-eabi/bin")
 find_program(ARM_GCC ${TOOLCHAIN_PREFIX}gcc
-    PATHS ${ARM_TOOLCHAIN_DIRS} /usr/bin /usr/local/bin
-    REQUIRED)
+    PATHS ${ARM_TOOLCHAIN_DIRS} /usr/bin /usr/local/bin)
+if(NOT ARM_GCC)
+    message(FATAL_ERROR
+        "arm-none-eabi-gcc was not found on PATH or in the usual install folders.\n"
+        "  - Just installed it? Restart VS Code / your terminal so it sees the new PATH.\n"
+        "  - Otherwise add the toolchain's bin folder to PATH, or point CMake at it:\n"
+        "      cmake --preset debug -DARM_GCC=<full path to arm-none-eabi-gcc>\n"
+        "Delete the build folder before configuring again.")
+endif()
 get_filename_component(TOOLCHAIN_BIN "${ARM_GCC}" DIRECTORY)
 
-set(CMAKE_C_COMPILER   "${TOOLCHAIN_BIN}/${TOOLCHAIN_PREFIX}gcc")
-set(CMAKE_ASM_COMPILER "${TOOLCHAIN_BIN}/${TOOLCHAIN_PREFIX}gcc")
-set(CMAKE_CXX_COMPILER "${TOOLCHAIN_BIN}/${TOOLCHAIN_PREFIX}g++")
-set(CMAKE_OBJCOPY      "${TOOLCHAIN_BIN}/${TOOLCHAIN_PREFIX}objcopy" CACHE FILEPATH "objcopy")
-set(CMAKE_SIZE         "${TOOLCHAIN_BIN}/${TOOLCHAIN_PREFIX}size"    CACHE FILEPATH "size")
+# Use find_program's full paths rather than "${TOOLCHAIN_BIN}/arm-none-eabi-gcc":
+# on Windows the file is arm-none-eabi-gcc.exe, and CMake won't add the .exe to a
+# path built by hand.
+set(CMAKE_C_COMPILER   "${ARM_GCC}")
+set(CMAKE_ASM_COMPILER "${ARM_GCC}")
+find_program(ARM_GXX       ${TOOLCHAIN_PREFIX}g++     PATHS "${TOOLCHAIN_BIN}" NO_DEFAULT_PATH)
+find_program(CMAKE_OBJCOPY ${TOOLCHAIN_PREFIX}objcopy PATHS "${TOOLCHAIN_BIN}" NO_DEFAULT_PATH REQUIRED)
+if(ARM_GXX)
+    set(CMAKE_CXX_COMPILER "${ARM_GXX}")
+endif()
 
 # Cortex-M7 with the double-precision FPU, as fitted on the STM32H743.
 set(MCU_FLAGS "-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb")
