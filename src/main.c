@@ -12,6 +12,7 @@
 
 #include "tasks/airbrake_task.h"
 #include "tasks/state_estimation_task.h"
+#include "tasks/pt_task.h"
 
 static void vHeartbeatTask(void *pvParameters);
 
@@ -59,6 +60,15 @@ int main(void)
 
     if (xTaskCreate(vAirbrakeTask,
                     "airbrake",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    tskIDLE_PRIORITY + 1,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vPtTask,
+                    "pt",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     tskIDLE_PRIORITY + 1,
