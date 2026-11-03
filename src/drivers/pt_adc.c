@@ -53,7 +53,7 @@ void pt_adc_init(void)
     }
     __HAL_RCC_ADC12_CLK_ENABLE();
 
-    /* GPIOA/GPIOC clocks are already on: MX_GPIO_Init() enables every port. */
+    /* GPIOA/GPIOC clocks are already on: MX_GPIO_Init() enables ports A-D and H. */
     GPIO_InitTypeDef pin_config = {0};
     pin_config.Mode = GPIO_MODE_ANALOG;
     pin_config.Pull = GPIO_NOPULL;

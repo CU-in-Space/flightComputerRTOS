@@ -7,6 +7,9 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/stat.h>
+
+#include "tasks/log_task.h"
 
 /* Linker-script symbols. Only their addresses mean anything. */
 extern uint8_t end;              /* first byte after .bss: where the heap starts */
@@ -37,4 +40,50 @@ void *_sbrk(ptrdiff_t increment)
     uint8_t *previous = heap_top;
     heap_top += increment;
     return previous;
+}
+
+// printf: newlib flushes stdout (line-buffered) through _write.
+int _write(int file, char *ptr, int len)
+{
+    (void)file;
+    log_write(ptr, (size_t)len);
+    return len;
+}
+
+// The rest stand in for libnosys's stubs, which warn at link time.
+int _read(int file, char *ptr, int len)
+{
+    (void)file;
+    (void)ptr;
+    (void)len;
+    return 0;
+}
+
+int _close(int file)
+{
+    (void)file;
+    errno = EBADF;
+    return -1;
+}
+
+int _lseek(int file, int offset, int whence)
+{
+    (void)file;
+    (void)offset;
+    (void)whence;
+    errno = ESPIPE;
+    return -1;
+}
+
+int _fstat(int file, struct stat *status)
+{
+    (void)file;
+    status->st_mode = S_IFCHR;
+    return 0;
+}
+
+int _isatty(int file)
+{
+    (void)file;
+    return 1;
 }

@@ -1,6 +1,6 @@
-/* Entry point -- brings the clocks and kernel up and starts the heartbeat.
- * Flight logic goes in its own tasks, created here alongside the heartbeat.
- */
+/* Entry point -- brings the clocks and kernel up and starts the tasks. */
+#include <stdio.h>
+
 #include "main.h"
 #include "system_clock.h"
 #include "gpio.h"
@@ -11,8 +11,10 @@
 #include "task.h"
 
 #include "tasks/airbrake_task.h"
+#include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
 #include "tasks/pt_task.h"
+#include "tasks/task_priorities.h"
 
 static void vHeartbeatTask(void *pvParameters);
 
@@ -38,11 +40,25 @@ int main(void)
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
 
+    // FreeRTOS masks SysTick from its first call until the scheduler starts,
+    // so HAL_GetTick() is frozen from here on: no HAL_Delay or HAL timeouts.
+    log_init();
+    printf("boot: SYSCLK %lu Hz\n", (unsigned long)SystemCoreClock);
+
+    if (xTaskCreate(vLogTask,
+                    "log",
+                    configMINIMAL_STACK_SIZE * 2,
+                    NULL,
+                    PRIORITY_LOG,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
     if (xTaskCreate(vHeartbeatTask,
                     "heartbeat",
                     configMINIMAL_STACK_SIZE * 2,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_HEARTBEAT,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -53,7 +69,7 @@ int main(void)
                     "state_est",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_FLIGHT_STUBS,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -62,7 +78,7 @@ int main(void)
                     "airbrake",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_FLIGHT_STUBS,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -71,7 +87,7 @@ int main(void)
                     "pt",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_SENSORS,
                     NULL) != pdPASS) {
         Error_Handler();
     }

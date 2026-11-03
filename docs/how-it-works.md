@@ -247,8 +247,11 @@ In [`src/main.c`](../src/main.c):
 | `MX_GPIO_Init()` | makes PB0 (LD1) an output | |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
+| `log_init()`, `printf(…)` | creates the debug-log queue; queues a boot line | from here on any task can `printf` |
+| `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
+| `xTaskCreate(vPtTask, …)` | samples the PT at 10 Hz and streams CSV through the log | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
 ### The scheduler: how the LED actually blinks

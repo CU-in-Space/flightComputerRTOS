@@ -13,13 +13,13 @@
  * started. tools/pt_capture.py records this stream on the host and adds the
  * computer's clock next to it, so the two can be checked against each other.
  *
- * This task owns USART3; nothing else prints.
+ * Rows go out through the debug log. On the Sensor HAT these pins are PT2.
  */
 #include "pt_task.h"
 
 #include <stdio.h>
 
-#include "usart.h"
+#include "tasks/log_task.h"
 #include "drivers/pt_adc.h"
 #include "app/pt_convert.h"
 
@@ -55,10 +55,10 @@ static int format_fixed(char *buffer, size_t buffer_size, float value, unsigned 
                     (int)decimals, (unsigned long)(magnitude % (uint32_t)scale));
 }
 
-static void uart_send(const char *text, int length)
+static void send_text(const char *text, int length)
 {
     if (length > 0) {
-        HAL_UART_Transmit(&huart3, (const uint8_t *)text, (uint16_t)length, HAL_MAX_DELAY);
+        log_write(text, (size_t)length);
     }
 }
 
@@ -70,7 +70,7 @@ static void send_preamble(void)
 
     length = snprintf(line, sizeof line,
                       "# PT board: A0 = SENS_DATA_IN (PA3), A1 = SENS_PWR_IN (PC0)\r\n");
-    uart_send(line, length);
+    send_text(line, length);
 
     length = snprintf(line, sizeof line, "# calibration: ratio_at_zero=");
     length += format_fixed(line + length, sizeof line - length, pt_calibration.ratio_at_zero, 4);
@@ -79,11 +79,11 @@ static void send_preamble(void)
     length += snprintf(line + length, sizeof line - length, " full_scale=");
     length += format_fixed(line + length, sizeof line - length, pt_calibration.full_scale, 2);
     length += snprintf(line + length, sizeof line - length, " psi\r\n");
-    uart_send(line, length);
+    send_text(line, length);
 
     length = snprintf(line, sizeof line,
                       "board_ms,data_counts,supply_counts,data_mv,supply_mv,ratio,pressure_psi,status\r\n");
-    uart_send(line, length);
+    send_text(line, length);
 }
 
 void vPtTask(void *pvParameters)
@@ -129,7 +129,7 @@ void vPtTask(void *pvParameters)
         if (length > (int)sizeof line - 1) {
             length = (int)sizeof line - 1;
         }
-        uart_send(line, length);
+        send_text(line, length);
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PT_PERIOD_MS));
     }
