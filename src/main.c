@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "main.h"
+#include "crash.h"
 #include "system_clock.h"
 #include "gpio.h"
 #include "usart.h"
@@ -32,6 +33,7 @@ int main(void)
      * clock, and SystemClock_Config() needs that to set the overdrive bit
      * required for VOS0 / 480 MHz. */
     HAL_Init();
+    crash_init();
     SystemClock_Config();
 
     MX_GPIO_Init();
@@ -40,10 +42,9 @@ int main(void)
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
 
-    // FreeRTOS masks SysTick from its first call until the scheduler starts,
-    // so HAL_GetTick() is frozen from here on: no HAL_Delay or HAL timeouts.
     log_init();
     printf("boot: SYSCLK %lu Hz\n", (unsigned long)SystemCoreClock);
+    crash_report();
 
     if (xTaskCreate(vLogTask,
                     "log",
@@ -113,30 +114,21 @@ static void vHeartbeatTask(void *pvParameters)
 
 /* ------------------------------------------------------------ FreeRTOS hooks */
 
-/* FreeRTOS owns SysTick, so HAL's millisecond tick has to be driven from here.
- * configTICK_RATE_HZ is 1000, which is exactly what HAL_GetTick() expects. */
-void vApplicationTickHook(void)
-{
-    HAL_IncTick();
-}
-
 void vApplicationMallocFailedHook(void)
 {
-    Error_Handler();
+    crash_error(__builtin_return_address(0));
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
-    (void)pcTaskName;
-    Error_Handler();
+    crash_stack_overflow(pcTaskName);
 }
 
 /* --------------------------------------------------------------------------- */
 
+// Saves an address in the calling function; look it up with addr2line.
 void Error_Handler(void)
 {
-    __disable_irq();
-    for (;;) {
-    }
+    crash_error(__builtin_return_address(0));
 }

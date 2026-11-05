@@ -11,6 +11,7 @@
 
 #include "FreeRTOS.h"
 #include "queue.h"
+#include "task.h"
 
 #include "usart.h"
 
@@ -33,6 +34,12 @@ void log_init(void)
 
 void log_write(const char *text, size_t length)
 {
+    // Before the scheduler nothing drains the queue, and a crash would lose it.
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
+        HAL_UART_Transmit(&huart3, (uint8_t *)text, (uint16_t)length, HAL_MAX_DELAY);
+        return;
+    }
+
     while (length > 0) {
         log_message_t message;
         message.length = length < LOG_MESSAGE_MAX ? length : LOG_MESSAGE_MAX;

@@ -8,6 +8,7 @@
 #ifndef __ASSEMBLER__
   #include <stdint.h>
   extern uint32_t SystemCoreClock;   /* set by SystemInit() / SystemCoreClockUpdate() */
+  void crash_assert(const char *file, int line);
 #endif
 
 /* --------------------------------------------------------------- scheduler */
@@ -39,7 +40,7 @@
 
 /* ------------------------------------------------------------------- hooks */
 #define configUSE_IDLE_HOOK                     0
-#define configUSE_TICK_HOOK                     1   /* vApplicationTickHook drives HAL_IncTick */
+#define configUSE_TICK_HOOK                     0
 #define configCHECK_FOR_STACK_OVERFLOW          2   /* pattern check; cheap and worth it */
 #define configUSE_MALLOC_FAILED_HOOK            1
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
@@ -91,9 +92,9 @@
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY \
         (configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 
-/* Catches misconfigured interrupt priorities and API misuse during bring-up. */
+// Catches misconfigured interrupt priorities and API misuse: saves file:line, then resets.
 #define configASSERT(x) \
-    if ((x) == 0) { taskDISABLE_INTERRUPTS(); for (;;) {} }
+    if ((x) == 0) { crash_assert(__FILE__, __LINE__); }
 
 /* The kernel's handlers must land on the CMSIS vector table names used by
  * startup_stm32h743xx.s. Do NOT also define these in stm32h7xx_it.c. */

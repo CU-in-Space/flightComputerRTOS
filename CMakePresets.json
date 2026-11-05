@@ -20,10 +20,21 @@
       "inherits": "base",
       "displayName": "Release (-Os -g)",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
+    },
+    {
+      "name": "test",
+      "displayName": "Host unit tests",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/test",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     }
   ],
   "buildPresets": [
     { "name": "debug",   "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" }
+    { "name": "release", "configurePreset": "release" },
+    { "name": "test",    "configurePreset": "test" }
+  ],
+  "testPresets": [
+    { "name": "test", "configurePreset": "test", "output": { "outputOnFailure": true } }
   ]
 }

@@ -6,6 +6,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # feeds clangd / C-C++ IntelliSense
 
+# Without the ARM toolchain file this is a host build: unit tests only.
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_subdirectory(test)
+    return()
+endif()
+
 set(TARGET_MCU     STM32H753xx)
 set(LINKER_SCRIPT  ${CMAKE_SOURCE_DIR}/linker/STM32H753ZI_FLASH.ld)
 set(STARTUP_SOURCE ${CMAKE_SOURCE_DIR}/lib/cmsis_device_h7/Source/Templates/gcc/startup_stm32h753xx.s)

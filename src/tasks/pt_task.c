@@ -90,7 +90,6 @@ void vPtTask(void *pvParameters)
 {
     (void)pvParameters;
 
-    /* Here, not in main(): see pt_adc_init() in pt_adc.h. */
     pt_adc_init();
 
     send_preamble();

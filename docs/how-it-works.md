@@ -260,8 +260,10 @@ FreeRTOS takes over the Cortex-M **SysTick** timer and has it interrupt **1,000
 times per second**. On every tick:
 
 - the kernel checks whether any waiting task is due, and switches to it
-- `vApplicationTickHook()` calls `HAL_IncTick()`, so HAL's millisecond clock keeps
-  counting
+
+HAL keeps its own millisecond clock (`HAL_GetTick()`) on a separate timer, TIM6,
+at an interrupt priority FreeRTOS never masks, so it runs even before the scheduler
+starts.
 
 The heartbeat task is a loop:
 
@@ -332,7 +334,7 @@ include/main.h, gpio.h, usart.h
 **Build and flash configuration**
 ```
 CMakeLists.txt                what to compile, how to link, the `flash` target
-CMakePresets.json             debug and release presets
+CMakePresets.json             debug, release and test presets
 cmake/arm-none-eabi-gcc.cmake the cross-compiler and CPU flags
 linker/STM32H753ZI_FLASH.ld   the memory map
 openocd/nucleo-h753zi.cfg     debugger settings

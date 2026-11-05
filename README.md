@@ -123,6 +123,7 @@ Already cloned without submodules? `git submodule update --init --recursive`.
 | `cmake --preset release` | Configure, `-Os -g` |
 | `cmake --build --preset debug` | Build → `build/debug/cuis-fc.{elf,hex,bin}` |
 | `cmake --build --preset release` | Build → `build/release/…` |
+| `cmake --preset test && cmake --build --preset test && ctest --preset test` | Host unit tests for `src/app` (needs a normal C compiler) |
 | `cmake -E rm -rf build` | Clean everything |
 
 Identical on all three platforms — the presets pin Ninja and the toolchain file,
@@ -174,7 +175,7 @@ so the command above is the same on every platform.
 
 ```
 CMakeLists.txt                  build definition
-CMakePresets.json               debug / release presets
+CMakePresets.json               debug / release / test presets
 cmake/arm-none-eabi-gcc.cmake   toolchain file (CPU flags live here)
 openocd/nucleo-h753zi.cfg       probe + target settings
 debug/STM32H753.svd             register map for the debugger's peripheral view
