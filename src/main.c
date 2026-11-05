@@ -121,14 +121,15 @@ int main(void)
         Error_Handler();
     }
 
-    if (xTaskCreate(vPtTask,
-                    "pt",
-                    configMINIMAL_STACK_SIZE * 4,
-                    NULL,
-                    PRIORITY_SENSORS,
-                    NULL) != pdPASS) {
-        Error_Handler();
-    }
+    // PT bench task, off until stage 3: its 10 Hz CSV rows drown the console.
+    // if (xTaskCreate(vPtTask,
+    //                 "pt",
+    //                 configMINIMAL_STACK_SIZE * 4,
+    //                 NULL,
+    //                 PRIORITY_SENSORS,
+    //                 NULL) != pdPASS) {
+    //     Error_Handler();
+    // }
 
     vTaskStartScheduler();
 
