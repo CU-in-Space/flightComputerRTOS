@@ -11,7 +11,11 @@
 
 #define LOG_MESSAGE_MAX  128U   // longer writes are split across messages
 
+// Creates the queue. Call before the scheduler starts.
 void log_init(void);
+
+// Queues text for the log task. Before the scheduler starts it sends straight
+// to the UART instead. Drops the text if the queue is full.
 void log_write(const char *text, size_t length);
 void vLogTask(void *pvParameters);
 

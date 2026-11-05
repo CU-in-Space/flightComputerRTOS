@@ -248,9 +248,13 @@ In [`src/main.c`](../src/main.c):
 | `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz**; picks the ADCs' clock | overwrites `SystemCoreClock` with `480000000` |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
 | `vbat_adc_init()` | sets up and calibrates ADC3 for the battery voltage | all hardware setup happens here, before any task runs |
+| `solenoid_pwm_init()` | starts TIM1's 20 kHz PWM at 0 %, then hands SOL1–4 to it | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
+| `actuator_init()`, `console_init()` | create the actuator command queue; turn on the serial port's receive interrupt | |
 | `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock | highest application priority |
+| `xTaskCreate(vActuatorTask, …)` | owns the solenoids; applies commands while the interlock is ENABLED | |
+| `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
 | `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
@@ -317,12 +321,12 @@ The most useful way to read the tree is by **who's allowed to change each file**
 **You write these**
 ```
 src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handler
-src/stm32h7xx_it.c            fault handlers, plus peripheral interrupt handlers as you add them
+src/stm32h7xx_it.c            fault handlers; peripheral interrupt handlers live with the code that owns the peripheral
 src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
-src/tasks/                    one file per task: interlock, PT, log; state estimation and airbrake are stubs
+src/tasks/                    one file per task: interlock, actuators, console, PT, log; state estimation and airbrake are stubs
 src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
-src/drivers/                  one peripheral each: ADCs for now
+src/drivers/                  one peripheral each: ADCs, solenoid PWM
 src/board/                    the pin map
 src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
 src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config
@@ -368,8 +372,8 @@ cubemx/ (except fc.ioc)       CubeMX's scratch project
 | You want to… | Do this |
 |---|---|
 | add a task | write it in `src/` (every `.c` file under `src/`, subfolders included, is compiled automatically) and `xTaskCreate` it in `main()` |
-| use a new peripheral | enable it in `cubemx/fc.ioc`, regenerate, copy the new files in |
-| handle an interrupt | add its handler to `src/stm32h7xx_it.c`. **Never** add `SysTick_Handler`, `PendSV_Handler` or `SVC_Handler` — FreeRTOS owns those |
+| use a new peripheral | write a driver in `src/drivers/`: it sets up the peripheral and its pins, and `main()` calls its init before the scheduler starts |
+| handle an interrupt | put its handler in the file that owns the peripheral (e.g. `USART3_IRQHandler` in `src/tasks/console_task.c`). **Never** add `SysTick_Handler`, `PendSV_Handler` or `SVC_Handler` — FreeRTOS owns those |
 | change heap size or tick rate | edit `include/FreeRTOSConfig.h` |
 
 ### How to lay out code as it grows
@@ -403,10 +407,14 @@ Three rules make it work:
    use the HAL. A driver never calls a task, and app logic never touches the HAL.
 2. **Tasks share data through queues, not global variables.** One task writing a
    global while another reads it is the classic RTOS bug. It passes on the bench and
-   fails at random.
+   fails at random. The one exception is a single word that one task writes and
+   others only read, like the interlock state: a `static volatile` variable behind
+   a getter.
 3. **Keep `app/` free of HAL and FreeRTOS.** Then the flight logic — the code that
    matters most — also compiles on your computer, where you can test it against
-   recorded flight data without a board.
+   recorded flight data without a board. Small logic that belongs to one task
+   and its hardware, like the interlock or peak-and-hold, stays in that task's
+   file, where it's easier to follow than split across two.
 
 Treat this as a starting point, not a law. *Making Embedded Systems* and Miro
 Samek's course (below) explain the reasoning and the alternatives.

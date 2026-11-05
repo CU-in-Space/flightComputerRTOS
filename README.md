@@ -183,9 +183,9 @@ include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
 linker/STM32H753ZI_FLASH.ld     memory map
 src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
-src/tasks/                      one file per task (interlock, PT, log, flight stubs)
+src/tasks/                      one file per task (interlock, actuators, console, PT, log, flight stubs)
 src/app/                        plain-C logic, unit-tested on the host (test/)
-src/drivers/                    one peripheral each (ADCs)
+src/drivers/                    one peripheral each (ADCs, solenoid PWM)
 src/board/                      HAT/power-board pin map
 src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX, + ADC clock)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)

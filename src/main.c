@@ -7,12 +7,15 @@
 #include "gpio.h"
 #include "usart.h"
 #include "libc/locks.h"
+#include "drivers/solenoid_pwm.h"
 #include "drivers/vbat_adc.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "tasks/actuator_task.h"
 #include "tasks/airbrake_task.h"
+#include "tasks/console_task.h"
 #include "tasks/interlock_task.h"
 #include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
@@ -41,6 +44,7 @@ int main(void)
 
     MX_USART3_UART_Init();
     vbat_adc_init();
+    solenoid_pwm_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -49,11 +53,32 @@ int main(void)
     printf("boot: SYSCLK %lu Hz\n", (unsigned long)SystemCoreClock);
     crash_report();
 
+    actuator_init();
+    console_init();
+
     if (xTaskCreate(vInterlockTask,
                     "interlock",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     PRIORITY_SAFETY,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vActuatorTask,
+                    "actuator",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_ACTUATORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vConsoleTask,
+                    "console",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_CONSOLE,
                     NULL) != pdPASS) {
         Error_Handler();
     }
