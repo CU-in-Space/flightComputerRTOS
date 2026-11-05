@@ -41,19 +41,8 @@ static void add_injected_channel(uint32_t channel, uint32_t rank)
 
 void pt_adc_init(void)
 {
-    /* ADC kernel clock: CLKP <- HSI (64 MHz). HSI stays on after reset and is
-     * independent of the PLL1 setup in system_clock.c, so there is no need to
-     * bring up PLL2 just for the ADC. */
-    RCC_PeriphCLKInitTypeDef clock_config = {0};
-    clock_config.PeriphClockSelection = RCC_PERIPHCLK_ADC | RCC_PERIPHCLK_CKPER;
-    clock_config.CkperClockSelection  = RCC_CLKPSOURCE_HSI;
-    clock_config.AdcClockSelection    = RCC_ADCCLKSOURCE_CLKP;
-    if (HAL_RCCEx_PeriphCLKConfig(&clock_config) != HAL_OK) {
-        Error_Handler();
-    }
     __HAL_RCC_ADC12_CLK_ENABLE();
 
-    /* GPIOA/GPIOC clocks are already on: MX_GPIO_Init() enables ports A-D and H. */
     GPIO_InitTypeDef pin_config = {0};
     pin_config.Mode = GPIO_MODE_ANALOG;
     pin_config.Pull = GPIO_NOPULL;

@@ -2,9 +2,9 @@
 
 Firmware scaffold for the CU InSpace flight computer, targeting an
 **STM32H753ZIT6** on a **NUCLEO-H753ZI**. It builds, flashes, and runs the
-FreeRTOS scheduler at 480 MHz with a single **heartbeat task** that blinks LD1
-(green) at 1 Hz. A steady blink means the scheduler is alive; a frozen LED means
-a hang or fault.
+FreeRTOS scheduler at 480 MHz. A **heartbeat task** blinks LD1 (green) at 1 Hz:
+a steady blink means the scheduler is alive, a frozen LED means a hang or fault.
+The Sensor HAT and power-board firmware is being added in stages on top.
 
 **New to this?** Read [docs/how-it-works.md](docs/how-it-works.md) first: the build
 chain, flash chain, boot sequence and code layout, explained from fundamentals.
@@ -183,9 +183,14 @@ include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
 linker/STM32H753ZI_FLASH.ld     memory map
 src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
-src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX)
+src/tasks/                      one file per task (interlock, PT, log, flight stubs)
+src/app/                        plain-C logic, unit-tested on the host (test/)
+src/drivers/                    one peripheral each (ADCs)
+src/board/                      HAT/power-board pin map
+src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX, + ADC clock)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)
-src/gpio.c, src/usart.c         peripheral init                  (from CubeMX)
+src/gpio.c                      every port clock, plain outputs  (hand-written)
+src/usart.c                     peripheral init                  (from CubeMX)
 src/stm32h7xx_it.c              core fault handlers              (hand-written)
 cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules

@@ -23,10 +23,10 @@ typedef struct {
     uint16_t supply_counts;  /* A1: transducer supply */
 } pt_adc_sample_t;
 
-/* Sets up the ADC clock, the two analog pins, ADC1 and its injected
+/* Sets up the two analog pins, ADC1 and its injected
  * sequence, and calibrates it. All configuration happens here.
  * Calls Error_Handler() on failure. Call once, from the task that owns the
- * ADC, after MX_GPIO_Init() has turned on the GPIO port clocks. */
+ * ADC, after SystemClock_Config() and MX_GPIO_Init(). */
 void pt_adc_init(void);
 
 /* Triggers the injected sequence (A0 then A1) and waits for it. Only

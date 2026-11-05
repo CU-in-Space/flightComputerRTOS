@@ -14,6 +14,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#define PRIORITY_SAFETY        (tskIDLE_PRIORITY + 5)
 #define PRIORITY_SENSORS       (tskIDLE_PRIORITY + 3)
 #define PRIORITY_LOG           (tskIDLE_PRIORITY + 1)
 #define PRIORITY_HEARTBEAT     (tskIDLE_PRIORITY + 1)

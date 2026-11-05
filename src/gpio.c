@@ -20,6 +20,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "gpio.h"
+#include "board/board_pins.h"
 
 /* USER CODE BEGIN 0 */
 
@@ -32,34 +33,52 @@
 
 /* USER CODE END 1 */
 
-/** Configure pins
-     PC14-OSC32_IN (OSC32_IN)   ------> RCC_OSC32_IN
-     PC15-OSC32_OUT (OSC32_OUT)   ------> RCC_OSC32_OUT
-     PH0-OSC_IN (PH0)   ------> RCC_OSC_IN
-     PH1-OSC_OUT (PH1)   ------> RCC_OSC_OUT
-*/
+// Every plain output pin. Pins that belong to a peripheral (ADC inputs, SPI, timers)
+// are set up by that peripheral's driver.
+static const struct {
+  GPIO_TypeDef *port;
+  uint16_t pin;
+} outputs[] = {
+  { LED1_GPIO_Port,       LED1_Pin },
+  { HAT_LED_GPIO_Port,    HAT_LED_Pin },
+  // Actuators. Low is off for every one of them.
+  { SOL1_CTL_GPIO_Port,   SOL1_CTL_Pin },
+  { SOL2_CTL_GPIO_Port,   SOL2_CTL_Pin },
+  { SOL3_CTL_GPIO_Port,   SOL3_CTL_Pin },
+  { SOL4_CTL_GPIO_Port,   SOL4_CTL_Pin },
+  { SRV1_PWM_GPIO_Port,   SRV1_PWM_Pin },
+  { SRV2_PWM_GPIO_Port,   SRV2_PWM_Pin },
+  { SRV3_PWM_GPIO_Port,   SRV3_PWM_Pin },
+  { SRV4_PWM_GPIO_Port,   SRV4_PWM_Pin },
+  { STP_STEP_GPIO_Port,   STP_STEP_Pin },
+  { STP_DIR_GPIO_Port,    STP_DIR_Pin },
+  { STP_NSLEEP_GPIO_Port, STP_NSLEEP_Pin },
+};
+
+// The HAT's chip selects and radio lines aren't here. They stay high impedance
+// until their drivers start, so nothing drives a HAT chip that has no power yet.
 void MX_GPIO_Init(void)
 {
-
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+  GPIO_InitTypeDef pin_config = {0};
+  pin_config.Mode  = GPIO_MODE_OUTPUT_PP;
+  pin_config.Pull  = GPIO_NOPULL;
+  pin_config.Speed = GPIO_SPEED_FREQ_LOW;
 
-  /*Configure GPIO pin : LED1_Pin */
-  GPIO_InitStruct.Pin = LED1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED1_GPIO_Port, &GPIO_InitStruct);
-
+  for (unsigned i = 0; i < sizeof outputs / sizeof outputs[0]; i++) {
+    // Level first, so the pin is already low when it becomes an output.
+    HAL_GPIO_WritePin(outputs[i].port, outputs[i].pin, GPIO_PIN_RESET);
+    pin_config.Pin = outputs[i].pin;
+    HAL_GPIO_Init(outputs[i].port, &pin_config);
+  }
 }
 
 /* USER CODE BEGIN 2 */

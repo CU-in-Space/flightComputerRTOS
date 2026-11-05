@@ -1,8 +1,7 @@
 /* Sensor HAT and power board pin map, from the HAT's final netlist (2026-10-20).
  * AF numbers checked against CubeMX's STM32H753ZITx pin database.
  *
- * MX_GPIO_Init() only clocks GPIOA-D and H. A driver using a GPIOE/F/G pin
- * must call __HAL_RCC_GPIOx_CLK_ENABLE() first.
+ * MX_GPIO_Init() clocks every GPIO port and sets up the plain outputs.
  */
 #ifndef BOARD_BOARD_PINS_H
 #define BOARD_BOARD_PINS_H

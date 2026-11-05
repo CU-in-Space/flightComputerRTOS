@@ -242,12 +242,15 @@ In [`src/main.c`](../src/main.c):
 |---|---|---|
 | `MPU_Config()` | marks unmapped address ranges as no-access | the M7 reads ahead speculatively and would fault on them |
 | `SCB_EnableICache()` | turns on the instruction cache | free speed |
-| `HAL_Init()` | HAL setup, then calls `HAL_MspInit()`, which clocks the SYSCFG peripheral | the next call needs SYSCFG |
-| `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz** | overwrites `SystemCoreClock` with `480000000` |
-| `MX_GPIO_Init()` | makes PB0 (LD1) an output | |
+| `HAL_Init()` | HAL setup, then calls `HAL_MspInit()`, which clocks the SYSCFG peripheral | `SystemClock_Config()` needs SYSCFG |
+| `MX_GPIO_Init()` | clocks every GPIO port; drives LD1, the HAT LED and every power-board actuator line low | before anything else can go wrong |
+| `crash_init()` | unlocks the RTC backup registers that hold the crash record | |
+| `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz**; picks the ADCs' clock | overwrites `SystemCoreClock` with `480000000` |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
+| `vbat_adc_init()` | sets up and calibrates ADC3 for the battery voltage | all hardware setup happens here, before any task runs |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
-| `log_init()`, `printf(…)` | creates the debug-log queue; queues a boot line | from here on any task can `printf` |
+| `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
+| `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock | highest application priority |
 | `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
@@ -317,7 +320,12 @@ src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handle
 src/stm32h7xx_it.c            fault handlers, plus peripheral interrupt handlers as you add them
 src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
-src/tasks/                    one file per task: state estimation and airbrake (stubs for now)
+src/tasks/                    one file per task: interlock, PT, log; state estimation and airbrake are stubs
+src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
+src/drivers/                  one peripheral each: ADCs for now
+src/board/                    the pin map
+src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
+src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config
 include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt priorities
 ```
 
@@ -325,9 +333,8 @@ include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt p
 ```
 cubemx/fc.ioc                 ← the source of truth. Change pins and clocks here,
                                 regenerate, and copy the files below back in.
-src/system_clock.c            SystemClock_Config (480 MHz) + MPU_Config
 src/stm32h7xx_hal_msp.c       each peripheral's clock and pin setup ("MCU Support Package")
-src/gpio.c, src/usart.c       MX_GPIO_Init, MX_USART3_UART_Init
+src/usart.c                   MX_USART3_UART_Init
 include/main.h, gpio.h, usart.h
 ```
 
@@ -367,7 +374,7 @@ cubemx/ (except fc.ioc)       CubeMX's scratch project
 
 ### How to lay out code as it grows
 
-Today there's `main.c` plus two stub tasks in `src/tasks/`. Once sensors, logging
+Today there are tasks, drivers, `app/` logic and the board pin map. As sensors, logging
 and airbrake control arrive, a common, proven shape is three kinds of module, each
 in its own folder under `src/`. Subfolders compile automatically, and `#include "drivers/imu.h"` works.
 

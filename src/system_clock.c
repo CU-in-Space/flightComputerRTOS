@@ -2,6 +2,7 @@
  *
  * 8 MHz HSE (bypass, ST-LINK MCO) -> PLL1 /4 x480 /2 -> 480 MHz SYSCLK,
  * 240 MHz HCLK, 120 MHz on APB1-4. Requires VOS0, hence the LDO supply.
+ * The ADCs run from the 64 MHz HSI.
  */
 #include "main.h"
 #include "system_clock.h"
@@ -55,6 +56,16 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  // ADC1-3 share one kernel clock: the 64 MHz HSI, independent of the PLL.
+  RCC_PeriphCLKInitTypeDef adc_clock = {0};
+  adc_clock.PeriphClockSelection = RCC_PERIPHCLK_ADC | RCC_PERIPHCLK_CKPER;
+  adc_clock.CkperClockSelection  = RCC_CLKPSOURCE_HSI;
+  adc_clock.AdcClockSelection    = RCC_ADCCLKSOURCE_CLKP;
+  if (HAL_RCCEx_PeriphCLKConfig(&adc_clock) != HAL_OK)
   {
     Error_Handler();
   }
