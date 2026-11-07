@@ -31,14 +31,16 @@ static void cmd_status(int argc, char *argv[]);
 static void cmd_off(int argc, char *argv[]);
 static void cmd_sol(int argc, char *argv[]);
 static void cmd_srv(int argc, char *argv[]);
+static void cmd_stp(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
-    { "help",   "list commands",                         cmd_help   },
-    { "status", "interlock, VBAT, solenoids and servos", cmd_status },
-    { "off",    "every actuator off",                    cmd_off    },
-    { "sol",    "<1-4> <on|off>: switch a solenoid",     cmd_sol    },
-    { "srv",    "<1-4> <us|off>: set a servo's pulse",   cmd_srv    },
+    { "help",   "list commands",                               cmd_help   },
+    { "status", "interlock, VBAT and every actuator",           cmd_status },
+    { "off",    "every actuator off",                           cmd_off    },
+    { "sol",    "<1-4> <on|off>: switch a solenoid",            cmd_sol    },
+    { "srv",    "<1-4> <us|off>: set a servo's pulse",          cmd_srv    },
+    { "stp",    "home | zero | stop | go <step> | jog <steps>", cmd_stp    },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -153,11 +155,11 @@ static void send_command(const command_t *command)
     }
 }
 
-// True if the whole word is a decimal number.
-static bool read_number(const char *text, unsigned long *value)
+// True if the whole word is a decimal number, with an optional sign.
+static bool read_number(const char *text, long *value)
 {
     char *end;
-    *value = strtoul(text, &end, 10);
+    *value = strtol(text, &end, 10);
     return *end == '\0';
 }
 
@@ -193,7 +195,7 @@ static void cmd_sol(int argc, char *argv[])
         return;
     }
 
-    unsigned long number;
+    long number;
     bool on = strcmp(argv[2], "on") == 0;
     if (!read_number(argv[1], &number) || number < 1 || number > SOLENOID_COUNT
         || (!on && strcmp(argv[2], "off") != 0)) {
@@ -213,16 +215,42 @@ static void cmd_srv(int argc, char *argv[])
         return;
     }
 
-    unsigned long number;
-    unsigned long pulse_us = 0;   // "off"
+    long number;
+    long pulse_us = 0;   // "off"
     bool off = strcmp(argv[2], "off") == 0;
     if (!read_number(argv[1], &number) || number < 1 || number > SERVO_COUNT
-        || (!off && (!read_number(argv[2], &pulse_us) || pulse_us == 0 || pulse_us > UINT16_MAX))) {
+        || (!off && (!read_number(argv[2], &pulse_us) || pulse_us < 1 || pulse_us > UINT16_MAX))) {
         printf("usage: srv <1-4> <us|off>\r\n");
         return;
     }
 
     command_t command = { .type = COMMAND_SERVO, .channel = (uint8_t)(number - 1),
                           .pulse_us = (uint16_t)pulse_us };
+    send_command(&command);
+}
+
+// go is a position from home, jog a distance from here (negative toward the switch).
+// The actuator task checks the interlock, home and travel.
+static void cmd_stp(int argc, char *argv[])
+{
+    command_t command = {0};
+    long steps = 0;
+
+    if (argc == 2 && strcmp(argv[1], "home") == 0) {
+        command.type = COMMAND_STEPPER_HOME;
+    } else if (argc == 2 && strcmp(argv[1], "zero") == 0) {
+        command.type = COMMAND_STEPPER_ZERO;
+    } else if (argc == 2 && strcmp(argv[1], "stop") == 0) {
+        command.type = COMMAND_STEPPER_STOP;
+    } else if (argc == 3 && strcmp(argv[1], "go") == 0 && read_number(argv[2], &steps)) {
+        command.type = COMMAND_STEPPER_GO;
+    } else if (argc == 3 && strcmp(argv[1], "jog") == 0 && read_number(argv[2], &steps)) {
+        command.type = COMMAND_STEPPER_JOG;
+    } else {
+        printf("usage: stp home | zero | stop | go <step> | jog <steps>\r\n");
+        return;
+    }
+
+    command.steps = (int32_t)steps;
     send_command(&command);
 }

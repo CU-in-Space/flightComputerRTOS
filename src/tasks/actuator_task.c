@@ -9,6 +9,7 @@
 #include "app/command.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
+#include "drivers/stepper.h"
 #include "tasks/interlock_task.h"
 
 #define ACTUATOR_PERIOD_MS  10U
@@ -23,6 +24,22 @@
 // overload the power board's 5 A servo buck, so moves go out one at a time. 60 ms is
 // three whole 20 ms periods, because a new pulse only starts at a period boundary.
 #define SERVO_STAGGER_MS  60U
+
+// Full steps per second, with no ramp: keep them low enough that the motor starts
+// without stalling. 2000 steps is one turn of the gearbox output.
+#define STEPPER_STEPS_PER_S       400U
+#define STEPPER_HOME_STEPS_PER_S  200U
+// "stp go" stays between 0 (home) and this. A placeholder until the airbrake is built.
+#define STEPPER_TRAVEL_STEPS      2000
+// Homing looks for the switch this far at most, then backs off this far and calls it 0.
+#define STEPPER_HOME_SEEK_STEPS     (STEPPER_TRAVEL_STEPS + 200)
+#define STEPPER_HOME_BACKOFF_STEPS  50
+// The DRV8825 takes 1.7 ms to wake. vTaskDelay(3) waits at least 2 ms.
+#define STEPPER_WAKE_TICKS  3U
+
+// true: hold position between moves (flight). false: sleep between moves, so the
+// coils carry no current on the bench. Each wake can then shift it by up to 2 steps.
+#define STEPPER_HOLD_WHEN_IDLE  false
 
 typedef struct {
     bool on;
@@ -39,6 +56,14 @@ typedef struct {
     uint16_t max_us;
 } servo_limits_t;
 
+// What the stepper is doing. Homing is two moves: to the switch, then off it.
+typedef enum {
+    STEPPER_IDLE,
+    STEPPER_MOVING,
+    STEPPER_SEEKING_SWITCH,
+    STEPPER_BACKING_OFF,
+} stepper_job_t;
+
 // Safe for any hobby servo. Widen a channel once its end stops are measured.
 static const servo_limits_t servo_limits[SERVO_COUNT] = {
     { 1000, 2000 },
@@ -53,6 +78,10 @@ static solenoid_t solenoids[SOLENOID_COUNT];
 static servo_t servos[SERVO_COUNT];
 static uint32_t last_servo_move_ms;
 static unsigned next_servo;   // where the next search for a move starts
+
+static stepper_job_t stepper_job;
+static bool stepper_awake;
+static bool stepper_homed;   // position counts from home, or from "stp zero"
 
 void actuator_init(void)
 {
@@ -71,6 +100,41 @@ static void print_servo(unsigned i, uint16_t pulse_us)
     }
 }
 
+// Wakes the driver if it's asleep and starts a move.
+static void stepper_start(stepper_job_t job, int32_t steps, uint32_t steps_per_s, bool stop_at_limit)
+{
+    if (!stepper_awake) {
+        stepper_set_awake(true);
+        stepper_awake = true;
+        vTaskDelay(STEPPER_WAKE_TICKS);
+    }
+    stepper_move(steps, steps_per_s, stop_at_limit);
+    stepper_job = job;
+}
+
+// Puts the driver to sleep and forgets home: asleep, nothing holds the position.
+static void stepper_release(void)
+{
+    stepper_set_awake(false);
+    stepper_awake = false;
+    stepper_homed = false;
+    stepper_job = STEPPER_IDLE;
+}
+
+// A move, or a zero, needs the interlock ENABLED and the last move finished.
+static bool stepper_can_move(interlock_state_t interlock)
+{
+    if (interlock != INTERLOCK_ENABLED) {
+        printf("stp refused: interlock %s\r\n", interlock_state_names[interlock]);
+        return false;
+    }
+    if (stepper_job != STEPPER_IDLE || stepper_moving()) {
+        printf("stp busy: stp stop first\r\n");
+        return false;
+    }
+    return true;
+}
+
 static void run_command(const command_t *command, interlock_state_t interlock, uint32_t now_ms)
 {
     switch (command->type) {
@@ -83,6 +147,9 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             print_servo(i, servos[i].target_us);
         }
+        printf("stp %s at %ld, %s\r\n",
+               stepper_job != STEPPER_IDLE ? "moving" : stepper_awake ? "holding" : "asleep",
+               (long)stepper_position(), stepper_homed ? "homed" : "not homed");
         break;
 
     case COMMAND_ALL_OFF:
@@ -92,6 +159,7 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             servos[i].target_us = 0;
         }
+        stepper_release();
         printf("all off commanded\r\n");
         break;
 
@@ -130,6 +198,66 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
         print_servo(command->channel, command->pulse_us);
         break;
     }
+
+    case COMMAND_STEPPER_HOME:
+        if (!stepper_can_move(interlock)) {
+            break;
+        }
+        // Reply first: waking the driver holds this task up for a few ms, and the
+        // console prints its prompt as soon as the command has left the queue.
+        printf("stp homing\r\n");
+        // Already on the switch: skip straight to backing off it.
+        if (stepper_at_limit()) {
+            stepper_start(STEPPER_BACKING_OFF, STEPPER_HOME_BACKOFF_STEPS, STEPPER_HOME_STEPS_PER_S, false);
+        } else {
+            stepper_start(STEPPER_SEEKING_SWITCH, -STEPPER_HOME_SEEK_STEPS, STEPPER_HOME_STEPS_PER_S, true);
+        }
+        break;
+
+    case COMMAND_STEPPER_ZERO:
+        // For when there's no switch yet: wherever it is now becomes home. Needs
+        // ENABLED like a move, since the interlock forgets home otherwise.
+        if (!stepper_can_move(interlock)) {
+            break;
+        }
+        stepper_set_position(0);
+        stepper_homed = true;
+        printf("stp zeroed here\r\n");
+        break;
+
+    case COMMAND_STEPPER_GO:
+        if (!stepper_can_move(interlock)) {
+            break;
+        }
+        if (!stepper_homed) {
+            printf("stp refused: not homed (stp home or stp zero)\r\n");
+            break;
+        }
+        if (command->steps < 0 || command->steps > STEPPER_TRAVEL_STEPS) {
+            printf("stp refused: travel is 0-%d steps\r\n", STEPPER_TRAVEL_STEPS);
+            break;
+        }
+        printf("stp going to %ld\r\n", (long)command->steps);
+        stepper_start(STEPPER_MOVING, command->steps - stepper_position(), STEPPER_STEPS_PER_S, false);
+        break;
+
+    case COMMAND_STEPPER_JOG:
+        // Blind: no home needed and no travel limit, for bring-up. You watch it.
+        if (!stepper_can_move(interlock)) {
+            break;
+        }
+        printf("stp jogging %ld\r\n", (long)command->steps);
+        stepper_start(STEPPER_MOVING, command->steps, STEPPER_STEPS_PER_S, false);
+        break;
+
+    case COMMAND_STEPPER_STOP:
+        // A homing cut short is just a move: it reports where it stopped.
+        stepper_stop();
+        if (stepper_job != STEPPER_IDLE) {
+            stepper_job = STEPPER_MOVING;
+        }
+        printf("stp stopping\r\n");
+        break;
     }
 }
 
@@ -197,6 +325,42 @@ void vActuatorTask(void *pvParameters)
 
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             servo_pwm_set(i, servos[i].output_us);
+        }
+
+        // Leaving ENABLED or a driver FAULT: sleep and forget home. The interlock
+        // forgets home even when asleep, since a low battery can reset the driver.
+        if (interlock != INTERLOCK_ENABLED && (stepper_awake || stepper_homed)) {
+            stepper_release();
+            printf("stp off: interlock %s\r\n", interlock_state_names[interlock]);
+        } else if (stepper_awake && stepper_fault()) {
+            stepper_release();
+            printf("stp off: driver FAULT (overcurrent or overtemperature)\r\n");
+        }
+
+        // A move has finished: report it, or take the next step of homing.
+        if (stepper_job != STEPPER_IDLE && !stepper_moving()) {
+            stepper_job_t finished = stepper_job;
+            stepper_job = STEPPER_IDLE;
+
+            if (finished == STEPPER_MOVING) {
+                printf("stp at %ld\r\n", (long)stepper_position());
+            } else if (finished == STEPPER_SEEKING_SWITCH && stepper_at_limit()) {
+                stepper_start(STEPPER_BACKING_OFF, STEPPER_HOME_BACKOFF_STEPS, STEPPER_HOME_STEPS_PER_S, false);
+            } else if (finished == STEPPER_SEEKING_SWITCH) {
+                printf("stp home failed: no switch within %d steps\r\n", STEPPER_HOME_SEEK_STEPS);
+            } else if (stepper_at_limit()) {
+                printf("stp home failed: switch still pressed, stuck or unplugged\r\n");
+            } else {
+                stepper_set_position(0);
+                stepper_homed = true;
+                printf("stp homed\r\n");
+            }
+        }
+
+        // Bench mode: sleep as soon as the move is done. Home is kept.
+        if (!STEPPER_HOLD_WHEN_IDLE && stepper_awake && stepper_job == STEPPER_IDLE) {
+            stepper_set_awake(false);
+            stepper_awake = false;
         }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ACTUATOR_PERIOD_MS));

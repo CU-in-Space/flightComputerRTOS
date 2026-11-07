@@ -9,6 +9,7 @@
 #include "libc/locks.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
+#include "drivers/stepper.h"
 #include "drivers/vbat_adc.h"
 
 #include "FreeRTOS.h"
@@ -47,6 +48,7 @@ int main(void)
     vbat_adc_init();
     solenoid_pwm_init();
     servo_pwm_init();
+    stepper_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
