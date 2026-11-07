@@ -249,6 +249,7 @@ In [`src/main.c`](../src/main.c):
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
 | `vbat_adc_init()` | sets up and calibrates ADC3 for the battery voltage | all hardware setup happens here, before any task runs |
 | `solenoid_pwm_init()` | starts TIM1's 20 kHz PWM at 0 %, then hands SOL1–4 to it | |
+| `servo_pwm_init()` | starts TIM4's 50 Hz servo PWM with no pulses, then hands SRV1–4 to it | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
 | `actuator_init()`, `console_init()` | create the actuator command queue; turn on the serial port's receive interrupt | |
@@ -326,7 +327,7 @@ src/libc/locks.c              makes the C library thread-safe: newlib's locks on
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
 src/tasks/                    one file per task: interlock, actuators, console, PT, log; state estimation and airbrake are stubs
 src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
-src/drivers/                  one peripheral each: ADCs, solenoid PWM
+src/drivers/                  one peripheral each: ADCs, solenoid PWM, servo PWM
 src/board/                    the pin map
 src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
 src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config

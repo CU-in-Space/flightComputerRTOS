@@ -4,10 +4,11 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 
-// Owns the solenoids. Send it command_t on actuator_queue; it runs them every
-// 10 ms and refuses "on" unless the interlock is ENABLED.
+// Owns the solenoids and servos. Send it command_t on actuator_queue; it runs them
+// every 10 ms and refuses to move anything unless the interlock is ENABLED.
 
 #define SOLENOID_COUNT  4U   // SOL1-4
+#define SERVO_COUNT     4U   // SRV1-4
 
 extern QueueHandle_t actuator_queue;
 

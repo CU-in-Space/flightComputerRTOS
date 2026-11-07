@@ -30,13 +30,15 @@ static void cmd_help(int argc, char *argv[]);
 static void cmd_status(int argc, char *argv[]);
 static void cmd_off(int argc, char *argv[]);
 static void cmd_sol(int argc, char *argv[]);
+static void cmd_srv(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
-    { "help",   "list commands",                     cmd_help   },
-    { "status", "interlock, VBAT and each solenoid", cmd_status },
-    { "off",    "every actuator off",                cmd_off    },
-    { "sol",    "<1-4> <on|off>: switch a solenoid", cmd_sol    },
+    { "help",   "list commands",                         cmd_help   },
+    { "status", "interlock, VBAT, solenoids and servos", cmd_status },
+    { "off",    "every actuator off",                    cmd_off    },
+    { "sol",    "<1-4> <on|off>: switch a solenoid",     cmd_sol    },
+    { "srv",    "<1-4> <us|off>: set a servo's pulse",   cmd_srv    },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -151,6 +153,14 @@ static void send_command(const command_t *command)
     }
 }
 
+// True if the whole word is a decimal number.
+static bool read_number(const char *text, unsigned long *value)
+{
+    char *end;
+    *value = strtoul(text, &end, 10);
+    return *end == '\0';
+}
+
 static void cmd_help(int argc, char *argv[])
 {
     (void)argc;
@@ -183,15 +193,36 @@ static void cmd_sol(int argc, char *argv[])
         return;
     }
 
-    char *end;
-    unsigned long number = strtoul(argv[1], &end, 10);
+    unsigned long number;
     bool on = strcmp(argv[2], "on") == 0;
-    if (*end != '\0' || number < 1 || number > SOLENOID_COUNT
+    if (!read_number(argv[1], &number) || number < 1 || number > SOLENOID_COUNT
         || (!on && strcmp(argv[2], "off") != 0)) {
         printf("usage: sol <1-4> <on|off>\r\n");
         return;
     }
 
     command_t command = { .type = COMMAND_SOLENOID, .channel = (uint8_t)(number - 1), .on = on };
+    send_command(&command);
+}
+
+// The actuator task checks the pulse against that servo's limits.
+static void cmd_srv(int argc, char *argv[])
+{
+    if (argc != 3) {
+        printf("usage: srv <1-4> <us|off>\r\n");
+        return;
+    }
+
+    unsigned long number;
+    unsigned long pulse_us = 0;   // "off"
+    bool off = strcmp(argv[2], "off") == 0;
+    if (!read_number(argv[1], &number) || number < 1 || number > SERVO_COUNT
+        || (!off && (!read_number(argv[2], &pulse_us) || pulse_us == 0 || pulse_us > UINT16_MAX))) {
+        printf("usage: srv <1-4> <us|off>\r\n");
+        return;
+    }
+
+    command_t command = { .type = COMMAND_SERVO, .channel = (uint8_t)(number - 1),
+                          .pulse_us = (uint16_t)pulse_us };
     send_command(&command);
 }

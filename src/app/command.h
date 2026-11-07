@@ -11,12 +11,14 @@ typedef enum {
     COMMAND_STATUS,
     COMMAND_ALL_OFF,
     COMMAND_SOLENOID,
+    COMMAND_SERVO,
 } command_type_t;
 
 typedef struct {
     command_type_t type;
-    uint8_t channel;    // 0-3 for SOL1-4
-    bool on;
+    uint8_t channel;    // 0-3 for SOL1-4 or SRV1-4
+    bool on;            // solenoid
+    uint16_t pulse_us;  // servo; 0 = off
 } command_t;
 
 #endif /* APP_COMMAND_H */

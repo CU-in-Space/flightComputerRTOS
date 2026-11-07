@@ -7,6 +7,7 @@
 #include "gpio.h"
 #include "usart.h"
 #include "libc/locks.h"
+#include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/vbat_adc.h"
 
@@ -45,6 +46,7 @@ int main(void)
     MX_USART3_UART_Init();
     vbat_adc_init();
     solenoid_pwm_init();
+    servo_pwm_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -121,7 +123,7 @@ int main(void)
         Error_Handler();
     }
 
-    // PT bench task, off until stage 3: its 10 Hz CSV rows drown the console.
+    // PT bench task, off until stage 4: its 10 Hz CSV rows drown the console.
     // if (xTaskCreate(vPtTask,
     //                 "pt",
     //                 configMINIMAL_STACK_SIZE * 4,
