@@ -87,3 +87,18 @@ int _isatty(int file)
     (void)file;
     return 1;
 }
+
+// strtof brings in abort(), which signals the current process. There are no
+// processes here, so these only exist to link.
+int _kill(int pid, int signal)
+{
+    (void)pid;
+    (void)signal;
+    errno = EINVAL;
+    return -1;
+}
+
+int _getpid(void)
+{
+    return 1;
+}

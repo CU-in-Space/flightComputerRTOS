@@ -16,6 +16,7 @@
 #include "drivers/max31856.h"
 #include "drivers/pt_adc.h"
 #include "tasks/interlock_task.h"
+#include "tasks/lc_task.h"
 #include "tasks/log_task.h"
 #include "tasks/pt_task.h"
 #include "tasks/tc_task.h"
@@ -40,6 +41,7 @@ static void cmd_srv(int argc, char *argv[]);
 static void cmd_stp(int argc, char *argv[]);
 static void cmd_pt(int argc, char *argv[]);
 static void cmd_tc(int argc, char *argv[]);
+static void cmd_lc(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
@@ -51,6 +53,7 @@ static const console_command_t commands[] = {
     { "stp",    "home | zero | stop | go <step> | jog <steps>", cmd_stp    },
     { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
     { "tc",     "[stream]: thermocouples",                      cmd_tc     },
+    { "lc",     "[stream | tare | cal <N>]: load cell",         cmd_lc     },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -374,5 +377,55 @@ static void cmd_tc(int argc, char *argv[])
         stream(print_tcs);
     } else {
         printf("usage: tc [stream]\r\n");
+    }
+}
+
+static void print_lc(void)
+{
+    interlock_state_t interlock = interlock_current_state();
+    if (interlock != INTERLOCK_ENABLED) {
+        printf("lc: HAT has no power (interlock %s)\r\n", interlock_state_names[interlock]);
+        return;
+    }
+
+    lc_reading_t reading;
+    lc_latest(&reading);
+    if (!reading.present) {
+        printf("lc no reading\r\n");
+        return;
+    }
+
+    char mv_per_v[24];
+    format_fixed(mv_per_v, sizeof mv_per_v, reading.mv_per_v, 5);
+    if (!reading.calibrated) {
+        printf("lc %s mV/V  uncalibrated\r\n", mv_per_v);
+        return;
+    }
+    char newtons[16];
+    format_fixed(newtons, sizeof newtons, reading.newtons, 1);
+    printf("lc %s N  %s mV/V\r\n", newtons, mv_per_v);
+}
+
+// "lc tare" with the cell unloaded, then "lc cal <N>" with a known load on it.
+static void cmd_lc(int argc, char *argv[])
+{
+    if (argc == 1) {
+        print_lc();
+    } else if (argc == 2 && strcmp(argv[1], "stream") == 0) {
+        stream(print_lc);
+    } else if (argc == 2 && strcmp(argv[1], "tare") == 0) {
+        printf("taring, keep the cell still for a second\r\n");
+        printf(lc_tare() ? "lc zeroed\r\n" : "lc tare failed: no reading\r\n");
+    } else if (argc == 3 && strcmp(argv[1], "cal") == 0) {
+        char *end;
+        float newtons = strtof(argv[2], &end);
+        if (*end != '\0' || newtons == 0.0f) {
+            printf("usage: lc cal <known load in N>\r\n");
+            return;
+        }
+        printf("calibrating, keep the load still for a second\r\n");
+        printf(lc_calibrate(newtons) ? "lc calibrated\r\n" : "lc cal failed: no reading\r\n");
+    } else {
+        printf("usage: lc [stream | tare | cal <N>]\r\n");
     }
 }

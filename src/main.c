@@ -7,6 +7,7 @@
 #include "gpio.h"
 #include "usart.h"
 #include "libc/locks.h"
+#include "drivers/ads1220.h"
 #include "drivers/pt_adc.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/spi4_bus.h"
@@ -21,6 +22,7 @@
 #include "tasks/airbrake_task.h"
 #include "tasks/console_task.h"
 #include "tasks/interlock_task.h"
+#include "tasks/lc_task.h"
 #include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
 #include "tasks/pt_task.h"
@@ -54,6 +56,7 @@ int main(void)
     stepper_init();
     pt_adc_init();
     spi4_bus_init();
+    ads1220_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -126,6 +129,15 @@ int main(void)
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     PRIORITY_FLIGHT_STUBS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vLcTask,
+                    "lc",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
                     NULL) != pdPASS) {
         Error_Handler();
     }
