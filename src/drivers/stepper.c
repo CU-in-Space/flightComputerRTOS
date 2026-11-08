@@ -15,7 +15,7 @@ static TIM_HandleTypeDef htim2;
 static volatile int32_t position;
 static volatile int32_t direction;    // +1 or -1
 static volatile uint32_t remaining;   // steps left in this move, counting the one going out
-static volatile bool stop_at_limit4
+static volatile bool stop_at_limit;
 
 void stepper_init(void)
 {

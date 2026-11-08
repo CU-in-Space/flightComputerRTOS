@@ -13,12 +13,15 @@
 #include "usart.h"
 #include "app/command.h"
 #include "tasks/actuator_task.h"
+#include "drivers/pt_adc.h"
 #include "tasks/log_task.h"
+#include "tasks/pt_task.h"
 
 #define RX_BUFFER_SIZE  64U
 #define LINE_MAX        80U   // longest command line, including its arguments
 #define ARGS_MAX        8     // most words in one command
 #define SEND_TIMEOUT_MS 100U
+#define STREAM_PERIOD_MS 100U
 
 typedef struct {
     const char *name;
@@ -32,6 +35,7 @@ static void cmd_off(int argc, char *argv[]);
 static void cmd_sol(int argc, char *argv[]);
 static void cmd_srv(int argc, char *argv[]);
 static void cmd_stp(int argc, char *argv[]);
+static void cmd_pt(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
@@ -41,6 +45,7 @@ static const console_command_t commands[] = {
     { "sol",    "<1-4> <on|off>: switch a solenoid",            cmd_sol    },
     { "srv",    "<1-4> <us|off>: set a servo's pulse",          cmd_srv    },
     { "stp",    "home | zero | stop | go <step> | jog <steps>", cmd_stp    },
+    { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -253,4 +258,69 @@ static void cmd_stp(int argc, char *argv[])
 
     command.steps = (int32_t)steps;
     send_command(&command);
+}
+
+// newlib-nano's printf has no %f, so this prints value * 10^decimals as two
+// integers either side of the point. The sign is done by hand so -0.4 isn't "0.4".
+static void format_fixed(char *text, size_t size, float value, unsigned decimals)
+{
+    long scale = 1;
+    for (unsigned i = 0; i < decimals; i++) {
+        scale *= 10;
+    }
+    long scaled = (long)(value * (float)scale + (value < 0.0f ? -0.5f : 0.5f));
+    unsigned long magnitude = (unsigned long)(scaled < 0 ? -scaled : scaled);
+    snprintf(text, size, "%s%lu.%0*lu", scaled < 0 ? "-" : "", magnitude / (unsigned long)scale,
+             (int)decimals, magnitude % (unsigned long)scale);
+}
+
+static void print_pts(void)
+{
+    for (unsigned i = 0; i < PT_COUNT; i++) {
+        pt_reading_t reading;
+        pt_latest(i, &reading);
+        if (!reading.powered) {
+            printf("pt%u no supply (%lu mV)\r\n", i + 1, (unsigned long)reading.supply_mv);
+            continue;
+        }
+
+        char psi[16];
+        char ratio[16];
+        format_fixed(psi, sizeof psi, reading.psi, 1);
+        format_fixed(ratio, sizeof ratio, reading.ratio, 4);
+        printf("pt%u %s psi  ratio %s  out %lu mV  supply %lu mV\r\n", i + 1, psi, ratio,
+               (unsigned long)reading.data_mv, (unsigned long)reading.supply_mv);
+    }
+}
+
+// Drops anything that arrives in the next 10 ms: the rest of a key press, since
+// Enter can be CR then LF.
+static void drain_input(void)
+{
+    char key;
+    while (xStreamBufferReceive(rx_buffer, &key, 1, pdMS_TO_TICKS(10)) > 0) {
+    }
+}
+
+// "pt stream" prints every 100 ms until a key comes in.
+static void cmd_pt(int argc, char *argv[])
+{
+    bool stream = argc == 2 && strcmp(argv[1], "stream") == 0;
+    if (argc != 1 && !stream) {
+        printf("usage: pt [stream]\r\n");
+        return;
+    }
+    if (!stream) {
+        print_pts();
+        return;
+    }
+
+    // The LF of the Enter that ran this command may still be on its way.
+    drain_input();
+    printf("press any key to stop\r\n");
+    char key;
+    do {
+        print_pts();
+    } while (xStreamBufferReceive(rx_buffer, &key, 1, pdMS_TO_TICKS(STREAM_PERIOD_MS)) == 0);
+    drain_input();
 }

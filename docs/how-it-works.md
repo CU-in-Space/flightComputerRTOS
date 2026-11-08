@@ -251,16 +251,17 @@ In [`src/main.c`](../src/main.c):
 | `solenoid_pwm_init()` | starts TIM1's 20 kHz PWM at 0 %, then hands SOL1–4 to it | |
 | `servo_pwm_init()` | starts TIM4's 50 Hz servo PWM with no pulses, then hands SRV1–4 to it | |
 | `stepper_init()` | sets up TIM2 for STEP pulses (stopped) and the FAULT and limit-switch inputs; the DRV8825 stays asleep | |
+| `pt_adc_init()` | sets up ADC1 + ADC2 in dual mode, their DMA and TIM15, and calibrates both; nothing samples yet | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
 | `actuator_init()`, `console_init()` | create the actuator command queue; turn on the serial port's receive interrupt | |
 | `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock | highest application priority |
-| `xTaskCreate(vActuatorTask, …)` | owns the solenoids; applies commands while the interlock is ENABLED | |
+| `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED | |
 | `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
 | `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
-| `xTaskCreate(vPtTask, …)` | samples the PT at 10 Hz and streams CSV through the log | |
+| `xTaskCreate(vPtTask, …)` | starts PT sampling (1 kHz) and turns each 10 ms block into a pressure per PT | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
 ### The scheduler: how the LED actually blinks
@@ -328,7 +329,7 @@ src/libc/locks.c              makes the C library thread-safe: newlib's locks on
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
 src/tasks/                    one file per task: interlock, actuators, console, PT, log; state estimation and airbrake are stubs
 src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
-src/drivers/                  one peripheral each: ADCs, solenoid PWM, servo PWM, stepper
+src/drivers/                  one peripheral each: PT ADCs, VBAT ADC, solenoid PWM, servo PWM, stepper
 src/board/                    the pin map
 src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
 src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config

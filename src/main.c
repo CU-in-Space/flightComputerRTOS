@@ -7,6 +7,7 @@
 #include "gpio.h"
 #include "usart.h"
 #include "libc/locks.h"
+#include "drivers/pt_adc.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
@@ -49,6 +50,7 @@ int main(void)
     solenoid_pwm_init();
     servo_pwm_init();
     stepper_init();
+    pt_adc_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -125,15 +127,14 @@ int main(void)
         Error_Handler();
     }
 
-    // PT bench task, off until stage 4: its 10 Hz CSV rows drown the console.
-    // if (xTaskCreate(vPtTask,
-    //                 "pt",
-    //                 configMINIMAL_STACK_SIZE * 4,
-    //                 NULL,
-    //                 PRIORITY_SENSORS,
-    //                 NULL) != pdPASS) {
-    //     Error_Handler();
-    // }
+    if (xTaskCreate(vPtTask,
+                    "pt",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
 
     vTaskStartScheduler();
 
