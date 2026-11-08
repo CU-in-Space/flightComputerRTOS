@@ -252,15 +252,17 @@ In [`src/main.c`](../src/main.c):
 | `servo_pwm_init()` | starts TIM4's 50 Hz servo PWM with no pulses, then hands SRV1–4 to it | |
 | `stepper_init()` | sets up TIM2 for STEP pulses (stopped) and the FAULT and limit-switch inputs; the DRV8825 stays asleep | |
 | `pt_adc_init()` | sets up ADC1 + ADC2 in dual mode, their DMA and TIM15, and calibrates both; nothing samples yet | |
+| `spi4_bus_init()` | sets up SPI4 and its mutex; the pins stay high impedance until the HAT has power | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
 | `actuator_init()`, `console_init()` | create the actuator command queue; turn on the serial port's receive interrupt | |
-| `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock | highest application priority |
+| `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock. Also switches SPI4's pins with ENABLED (HAT powered) | highest application priority |
 | `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED | |
 | `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
 | `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
+| `xTaskCreate(vTcTask, …)` | sets the four thermocouple chips up whenever the HAT gets power, then reads them every 100 ms | |
 | `xTaskCreate(vPtTask, …)` | starts PT sampling (1 kHz) and turns each 10 ms block into a pressure per PT | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
@@ -327,9 +329,9 @@ src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handle
 src/stm32h7xx_it.c            fault handlers; peripheral interrupt handlers live with the code that owns the peripheral
 src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
-src/tasks/                    one file per task: interlock, actuators, console, PT, log; state estimation and airbrake are stubs
+src/tasks/                    one file per task: interlock, actuators, console, PT, TC, log; state estimation and airbrake are stubs
 src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
-src/drivers/                  one peripheral each: PT ADCs, VBAT ADC, solenoid PWM, servo PWM, stepper
+src/drivers/                  one peripheral or chip each: PT ADCs, VBAT ADC, solenoid PWM, servo PWM, stepper, SPI4 bus, MAX31856, W25Q128
 src/board/                    the pin map
 src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
 src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config
@@ -389,7 +391,8 @@ in its own folder under `src/`. Subfolders compile automatically, and `#include 
 src/
   main.c                     creates the tasks, nothing else
   libc/                      glue that makes the C library work under FreeRTOS (already exists)
-  drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. No FreeRTOS.
+  drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. FreeRTOS only where
+                             the hardware needs it, e.g. a mutex on a shared bus.
   tasks/    state_estimation_task.c  airbrake_task.c  log_task.c
                              one job each: wait on a queue, do the work, pass results on
                              (the first two exist as stubs)

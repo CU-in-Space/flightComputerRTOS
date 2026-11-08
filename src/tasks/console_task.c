@@ -13,9 +13,12 @@
 #include "usart.h"
 #include "app/command.h"
 #include "tasks/actuator_task.h"
+#include "drivers/max31856.h"
 #include "drivers/pt_adc.h"
+#include "tasks/interlock_task.h"
 #include "tasks/log_task.h"
 #include "tasks/pt_task.h"
+#include "tasks/tc_task.h"
 
 #define RX_BUFFER_SIZE  64U
 #define LINE_MAX        80U   // longest command line, including its arguments
@@ -36,6 +39,7 @@ static void cmd_sol(int argc, char *argv[]);
 static void cmd_srv(int argc, char *argv[]);
 static void cmd_stp(int argc, char *argv[]);
 static void cmd_pt(int argc, char *argv[]);
+static void cmd_tc(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
@@ -46,6 +50,7 @@ static const console_command_t commands[] = {
     { "srv",    "<1-4> <us|off>: set a servo's pulse",          cmd_srv    },
     { "stp",    "home | zero | stop | go <step> | jog <steps>", cmd_stp    },
     { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
+    { "tc",     "[stream]: thermocouples",                      cmd_tc     },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -302,25 +307,72 @@ static void drain_input(void)
     }
 }
 
-// "pt stream" prints every 100 ms until a key comes in.
-static void cmd_pt(int argc, char *argv[])
+// Calls print every 100 ms until a key comes in.
+static void stream(void (*print)(void))
 {
-    bool stream = argc == 2 && strcmp(argv[1], "stream") == 0;
-    if (argc != 1 && !stream) {
-        printf("usage: pt [stream]\r\n");
-        return;
-    }
-    if (!stream) {
-        print_pts();
-        return;
-    }
-
     // The LF of the Enter that ran this command may still be on its way.
     drain_input();
     printf("press any key to stop\r\n");
     char key;
     do {
-        print_pts();
+        print();
     } while (xStreamBufferReceive(rx_buffer, &key, 1, pdMS_TO_TICKS(STREAM_PERIOD_MS)) == 0);
     drain_input();
+}
+
+static void cmd_pt(int argc, char *argv[])
+{
+    if (argc == 1) {
+        print_pts();
+    } else if (argc == 2 && strcmp(argv[1], "stream") == 0) {
+        stream(print_pts);
+    } else {
+        printf("usage: pt [stream]\r\n");
+    }
+}
+
+static void print_tcs(void)
+{
+    interlock_state_t interlock = interlock_current_state();
+    if (interlock != INTERLOCK_ENABLED) {
+        printf("tc: HAT has no power (interlock %s)\r\n", interlock_state_names[interlock]);
+        return;
+    }
+
+    for (unsigned i = 0; i < TC_COUNT; i++) {
+        tc_reading_t reading;
+        tc_latest(i, &reading);
+        // Not set up yet, not answering, or the last read failed.
+        if (!reading.present) {
+            printf("tc%u no reading\r\n", i + 1);
+            continue;
+        }
+
+        char temp[16];
+        char cold_junction[16];
+        format_fixed(temp, sizeof temp, reading.value.temp_c, 1);
+        format_fixed(cold_junction, sizeof cold_junction, reading.value.cold_junction_c, 1);
+
+        // One name per fault bit that's set.
+        char faults[128] = "";
+        size_t used = 0;
+        for (unsigned bit = 0; bit < 8; bit++) {
+            if (reading.value.faults & (1U << bit)) {
+                used += (size_t)snprintf(faults + used, sizeof faults - used, "  %s",
+                                         max31856_fault_names[bit]);
+            }
+        }
+        printf("tc%u %s C  cold junction %s C%s\r\n", i + 1, temp, cold_junction, faults);
+    }
+}
+
+static void cmd_tc(int argc, char *argv[])
+{
+    if (argc == 1) {
+        print_tcs();
+    } else if (argc == 2 && strcmp(argv[1], "stream") == 0) {
+        stream(print_tcs);
+    } else {
+        printf("usage: tc [stream]\r\n");
+    }
 }

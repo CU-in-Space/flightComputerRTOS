@@ -7,6 +7,7 @@
 #include "task.h"
 
 #include "board/board_pins.h"
+#include "drivers/spi4_bus.h"
 #include "drivers/vbat_adc.h"
 
 #define INTERLOCK_PERIOD_MS  10U
@@ -61,6 +62,12 @@ void vInterlockTask(void *pvParameters)
             state = INTERLOCK_ENABLED;
         }
         // Still in the window and nothing to change: stay RECOVERING or ENABLED.
+
+        // The HAT runs off the battery, so it has power only while ENABLED. Its SPI4
+        // pins follow straight away, before any task can see the new state.
+        if ((state == INTERLOCK_ENABLED) != (previous == INTERLOCK_ENABLED)) {
+            spi4_bus_power(state == INTERLOCK_ENABLED);
+        }
 
         // Publish for the other tasks.
         current_state = state;

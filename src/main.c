@@ -9,6 +9,7 @@
 #include "libc/locks.h"
 #include "drivers/pt_adc.h"
 #include "drivers/servo_pwm.h"
+#include "drivers/spi4_bus.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
 #include "drivers/vbat_adc.h"
@@ -23,6 +24,7 @@
 #include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
 #include "tasks/pt_task.h"
+#include "tasks/tc_task.h"
 #include "tasks/task_priorities.h"
 
 static void vHeartbeatTask(void *pvParameters);
@@ -51,6 +53,7 @@ int main(void)
     servo_pwm_init();
     stepper_init();
     pt_adc_init();
+    spi4_bus_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -123,6 +126,15 @@ int main(void)
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     PRIORITY_FLIGHT_STUBS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vTcTask,
+                    "tc",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
                     NULL) != pdPASS) {
         Error_Handler();
     }
