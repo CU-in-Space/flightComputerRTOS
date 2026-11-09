@@ -1,5 +1,10 @@
 # cuis-fc — STM32H753ZI + FreeRTOS
 
+> [!IMPORTANT]
+> ****JACK, CHECK IN [`logs/2026-11-08-bench-sd-logging/`](logs/2026-11-08-bench-sd-logging/)****
+> First SD card bench log: [`flight.csv`](logs/2026-11-08-bench-sd-logging/flight.csv),
+> summarised in that folder's [README](logs/2026-11-08-bench-sd-logging/README.md).
+
 Firmware scaffold for the CU InSpace flight computer, targeting an
 **STM32H753ZIT6** on a **NUCLEO-H753ZI**. It builds, flashes, and runs the
 FreeRTOS scheduler at 480 MHz with a single **heartbeat task** that blinks LD1
@@ -301,6 +306,7 @@ src/tasks/sd_card_task.c        flight log on the SD card, logging API
 cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules
 tools/sd_log_decode.py          FLIGHT.LOG -> CSV
+logs/                           decoded flight and bench logs, one folder each
 ```
 
 Every `.c` file under `src/`, including subfolders, is compiled automatically,
