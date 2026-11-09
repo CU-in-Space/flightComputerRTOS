@@ -43,11 +43,11 @@ void MX_SDMMC1_SD_Init(void)
   hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_ENABLE;
-  hsd1.Init.ClockDiv = 4;
+  hsd1.Init.ClockDiv = 2;
   /* USER CODE BEGIN SDMMC1_Init 2 */
-  /* 100 MHz kernel clock / (2 * 4) = 12.5 MHz on SDMMC_CK. With short bench
-   * wires, single- and multi-block transfers pass at 25 MHz too; longer jumpers
-   * failed above 8.3 MHz, so this keeps a step of margin. HAL_SD_Init() talks
+  /* 100 MHz kernel clock / (2 * 2) = 25 MHz on SDMMC_CK (SD Default Speed).
+   * Needs short wires: long bench jumpers failed CRC above 8.3 MHz. If the card
+   * misbehaves on a new setup, try ClockDiv 4 (12.5 MHz) first. HAL_SD_Init() talks
    * to the card, so it runs from the SD card task (drivers/sd_card.c) rather
    * than here: a missing card must not stop the flight computer booting. */
   /* USER CODE END SDMMC1_Init 2 */

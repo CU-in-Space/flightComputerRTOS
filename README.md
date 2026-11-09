@@ -170,6 +170,36 @@ so the command above is the same on every platform.
 
 ---
 
+## SD card logging
+
+The `sd_card` task writes a flight log, `FLIGHT.LOG`, to a FAT32 SD card on
+SDMMC1 (4-bit, PC8–PC12 and PD2). Any task can log values. Register each
+channel in `main()` before the scheduler starts, then log from the task:
+
+```c
+static int baro_alt;
+baro_alt = sd_log_register("baro_alt_m", SD_LOG_FLOAT);   /* in main() */
+
+sd_log_float(baro_alt, altitude);                         /* in the task */
+```
+
+Logging never blocks; if the card falls behind, records are dropped and the
+count is kept in the log. The file is created once at 128 MB and then only
+overwritten sector by sector, so a power cut loses at most the last ~100 ms
+and never damages the file system. Each boot adds a session. To read it, copy
+`FLIGHT.LOG` off the card and run:
+
+```bash
+python3 tools/sd_log_decode.py FLIGHT.LOG > flight.csv
+```
+
+Bench wiring: keep the six SD wires short. Long jumpers caused CRC errors and
+failed writes even at a few MHz. Unplug USB before touching the wiring:
+disturbing the bus while powered can leave the card unresponsive until a
+power cycle.
+
+---
+
 ## Layout
 
 ```
@@ -189,8 +219,10 @@ src/gpio.c, src/usart.c         peripheral init                  (from CubeMX)
 src/sdmmc.c                     SD card peripheral init          (CubeMX format)
 src/fatfs/diskio.c              FatFs disk I/O -> drivers/sd_card.c
 src/stm32h7xx_it.c              core fault handlers              (hand-written)
+src/tasks/sd_card_task.c        flight log on the SD card, logging API
 cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules
+tools/sd_log_decode.py          FLIGHT.LOG -> CSV
 ```
 
 Every `.c` file under `src/`, including subfolders, is compiled automatically,
