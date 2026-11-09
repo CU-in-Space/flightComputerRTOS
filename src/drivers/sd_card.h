@@ -20,4 +20,13 @@ HAL_StatusTypeDef sd_card_init(void);
  * turned on. */
 HAL_StatusTypeDef sd_card_read(uint8_t *buf, uint32_t block, uint32_t count);
 
+/* Write count blocks from buf, starting at block. Returns once the card has
+ * finished programming them, so data reported written survives a power cut.
+ * Same buffer rules as sd_card_read(). */
+HAL_StatusTypeDef sd_card_write(const uint8_t *buf, uint32_t block,
+                                uint32_t count);
+
+/* Card size in blocks of SD_CARD_BLOCK_SIZE. Valid after sd_card_init(). */
+uint32_t sd_card_block_count(void);
+
 #endif /* DRIVERS_SD_CARD_H */

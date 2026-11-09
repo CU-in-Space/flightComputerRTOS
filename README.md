@@ -180,11 +180,14 @@ openocd/nucleo-h753zi.cfg       probe + target settings
 debug/STM32H753.svd             register map for the debugger's peripheral view
 include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
+include/ffconf.h                FatFs configuration
 linker/STM32H753ZI_FLASH.ld     memory map
 src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
 src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)
 src/gpio.c, src/usart.c         peripheral init                  (from CubeMX)
+src/sdmmc.c                     SD card peripheral init          (CubeMX format)
+src/fatfs/diskio.c              FatFs disk I/O -> drivers/sd_card.c
 src/stm32h7xx_it.c              core fault handlers              (hand-written)
 cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules
@@ -199,6 +202,7 @@ so new modules and anything copied out of CubeMX need no build-file edits.
 | `cmsis_core` | v5.9.0_20250520 |
 | `cmsis_device_h7` | v1.10.7 |
 | `stm32h7xx_hal_driver` | v1.11.6 |
+| `fatfs` | r0.15_stm32cube_20260403 |
 
 ---
 

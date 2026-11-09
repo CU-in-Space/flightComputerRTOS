@@ -44,6 +44,12 @@ void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
     wake_waiting_task();
 }
 
+void HAL_SD_TxCpltCallback(SD_HandleTypeDef *hsd)
+{
+    (void)hsd;
+    wake_waiting_task();
+}
+
 void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
 {
     (void)hsd;
@@ -98,4 +104,32 @@ HAL_StatusTypeDef sd_card_read(uint8_t *buf, uint32_t block, uint32_t count)
 
     waiting_task = NULL;
     return status;
+}
+
+HAL_StatusTypeDef sd_card_write(const uint8_t *buf, uint32_t block,
+                                uint32_t count)
+{
+    HAL_StatusTypeDef status;
+
+    if (!dma_reachable(buf)) {
+        return HAL_ERROR;
+    }
+
+    /* Drop any stale notification, then start the transfer. The HAL takes a
+     * non-const pointer but only reads from it. */
+    (void)ulTaskNotifyTake(pdTRUE, 0);
+    waiting_task = xTaskGetCurrentTaskHandle();
+
+    status = HAL_SD_WriteBlocks_DMA(&hsd1, (uint8_t *)buf, block, count);
+    if (status == HAL_OK) {
+        status = wait_for_transfer();
+    }
+
+    waiting_task = NULL;
+    return status;
+}
+
+uint32_t sd_card_block_count(void)
+{
+    return hsd1.SdCard.LogBlockNbr;
 }

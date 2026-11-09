@@ -10,3 +10,6 @@
 [submodule "lib/stm32h7xx_hal_driver"]
 	path = lib/stm32h7xx_hal_driver
 	url = https://github.com/STMicroelectronics/stm32h7xx_hal_driver.git
+[submodule "lib/fatfs"]
+	path = lib/fatfs
+	url = https://github.com/STMicroelectronics/stm32_mw_fatfs.git

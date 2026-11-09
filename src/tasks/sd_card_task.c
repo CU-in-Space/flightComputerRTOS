@@ -1,24 +1,25 @@
-/* TODO: SD card logging task -- only brings the card up so far.
+/* TODO: SD card logging task -- only mounts the card so far.
  *
- *   - next: FatFs on top of drivers/sd_card.c, writing one pre-allocated log
- *     file, so a power cut can't damage the file system
- *   - then: a logging API that other tasks register their values with at
- *     init, and that this task drains to the card
+ *   - next: a logging API that other tasks register their values with at
+ *     init, and that this task drains into one pre-allocated log file, so a
+ *     power cut can't damage the file system
  */
 #include "sd_card_task.h"
 
-#include "drivers/sd_card.h"
+#include "ff.h"
 
-/* How long to wait before trying a card that failed to come up again. */
+/* How long to wait before trying a card that failed to mount again. */
 #define SD_CARD_RETRY_MS 1000U
+
+static FATFS fs;
 
 void vSdCardTask(void *pvParameters)
 {
     (void)pvParameters;
 
-    /* Keep trying, so a card that is missing or slow at power-up still gets
-     * used once it answers. */
-    while (sd_card_init() != HAL_OK) {
+    /* Mount now (opt 1) rather than on first use, and keep trying, so a card
+     * that is missing or slow at power-up still gets used once it answers. */
+    while (f_mount(&fs, "", 1) != FR_OK) {
         vTaskDelay(pdMS_TO_TICKS(SD_CARD_RETRY_MS));
     }
 

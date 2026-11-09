@@ -57,6 +57,19 @@ target_include_directories(stm32cube PUBLIC
 target_compile_definitions(stm32cube PUBLIC ${TARGET_MCU} USE_HAL_DRIVER)
 
 # ---------------------------------------------------------------------------
+# FatFs (SD card file system)
+#
+# Only the core. The disk I/O layer it calls is ours (src/fatfs/diskio.c), so
+# ST's generic driver layer (ff_gen_drv.c, diskio.c) is left out.
+# ---------------------------------------------------------------------------
+add_library(fatfs STATIC ${CMAKE_SOURCE_DIR}/lib/fatfs/source/ff.c)
+
+target_include_directories(fatfs PUBLIC
+    ${CMAKE_SOURCE_DIR}/include                 # ffconf.h
+    ${CMAKE_SOURCE_DIR}/lib/fatfs/source
+)
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 # Globbed recursively so files lifted out of CubeMX (stm32h7xx_hal_msp.c, peripheral inits)
@@ -72,7 +85,7 @@ add_executable(${PROJECT_NAME}
 # Strict warnings on our code only -- vendor code is noisier than we want to see.
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wshadow -Wdouble-promotion)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel)
+target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel fatfs)
 
 # Lets code in src/ subfolders include each other as "drivers/imu.h" etc.
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
