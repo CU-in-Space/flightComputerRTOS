@@ -5,12 +5,14 @@
 #include "system_clock.h"
 #include "gpio.h"
 #include "usart.h"
+#include "sdmmc.h"
 #include "libc/locks.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
 #include "tasks/airbrake_task.h"
+#include "tasks/sd_card_task.h"
 #include "tasks/state_estimation_task.h"
 
 static void vHeartbeatTask(void *pvParameters);
@@ -33,6 +35,7 @@ int main(void)
 
     MX_GPIO_Init();
     MX_USART3_UART_Init();
+    MX_SDMMC1_SD_Init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -59,6 +62,15 @@ int main(void)
 
     if (xTaskCreate(vAirbrakeTask,
                     "airbrake",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    tskIDLE_PRIORITY + 1,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vSdCardTask,
+                    "sd_card",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     tskIDLE_PRIORITY + 1,

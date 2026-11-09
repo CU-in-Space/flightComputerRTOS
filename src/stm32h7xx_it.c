@@ -8,6 +8,7 @@
  * anything not defined falls through to Default_Handler in the startup file.
  */
 #include "stm32h7xx_hal.h"
+#include "sdmmc.h"
 
 void NMI_Handler(void)
 {
@@ -41,4 +42,9 @@ void UsageFault_Handler(void)
 
 void DebugMon_Handler(void)
 {
+}
+
+void SDMMC1_IRQHandler(void)
+{
+    HAL_SD_IRQHandler(&hsd1);
 }
