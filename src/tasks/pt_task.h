@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "app/pt_convert.h"
+
 // Owns the PTs. Every 10 ms it averages the newest block of samples into one
 // reading per PT and publishes it.
 
@@ -20,5 +22,8 @@ void vPtTask(void *pvParameters);
 
 // Copies the newest reading of one PT (0 = PT1, 1 = PT2).
 void pt_latest(unsigned pt, pt_reading_t *reading);
+
+// The ratio-to-psi calibration of one PT, for the data log.
+const pt_calibration_t *pt_calibration(unsigned pt);
 
 #endif /* TASKS_PT_TASK_H */

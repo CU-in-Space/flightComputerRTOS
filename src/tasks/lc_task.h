@@ -15,11 +15,20 @@ typedef struct {
     float newtons;
 } lc_reading_t;
 
+// Zero and scale, set by lc_tare and lc_calibrate.
+typedef struct {
+    int32_t zero_code;
+    float newtons_per_code;   // 0 until calibrated
+} lc_calibration_t;
+
 // Starts the ADS1220 when the HAT gets power and reads it on every DRDY.
 void vLcTask(void *pvParameters);
 
 // Copies the newest reading.
 void lc_latest(lc_reading_t *reading);
+
+// Copies the current zero and scale, for the data log.
+void lc_calibration(lc_calibration_t *calibration);
 
 // Makes the current load zero: averages one second of readings, so it blocks
 // the caller for a second. False if the load cell isn't reading.

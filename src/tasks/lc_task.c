@@ -8,6 +8,7 @@
 #include "main.h"
 #include "board/board_pins.h"
 #include "drivers/ads1220.h"
+#include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
 
 #define BLOCK_SAMPLES   10      // 10 ms at 1000 samples/s
@@ -17,10 +18,9 @@
 static TaskHandle_t lc_task_handle;
 static lc_reading_t latest;
 
-// Tare and calibration, in RAM until stage 7 can keep them in flash.
+// Tare and calibration, in RAM until stage 7b keeps them in flash.
 // Written by the console task, read by this one, so copied in critical sections.
-static int32_t zero_code;
-static float newtons_per_code;   // 0 until calibrated
+static lc_calibration_t calibration;
 
 // DRDY fell: a sample is ready.
 void EXTI0_IRQHandler(void)
@@ -38,6 +38,7 @@ void vLcTask(void *pvParameters)
     lc_task_handle = xTaskGetCurrentTaskHandle();
     bool hat_powered = false;
     bool started = false;
+    int32_t codes[BLOCK_SAMPLES];
     int64_t sum = 0;
     unsigned count = 0;
 
@@ -73,10 +74,13 @@ void vLcTask(void *pvParameters)
         }
 
          //if the read is sucessful, code will contain the read value
+        codes[count] = code;
         sum += code;
         if (++count < BLOCK_SAMPLES) {
             continue;
         }
+        _Static_assert(sizeof(record_lc_t) == sizeof codes, "record_lc_t must match a block");
+        datalog_write(RECORD_LC, codes, sizeof codes);
 
         //reach here after counting Block Samples
         lc_reading_t reading = { .present = true, .code = (int32_t)(sum / BLOCK_SAMPLES) };
@@ -88,8 +92,8 @@ void vLcTask(void *pvParameters)
         reading.mv_per_v = (float)reading.code / (float)ADS1220_FULL_SCALE / GAIN * 1000.0f;
 
         taskENTER_CRITICAL();
-        reading.calibrated = newtons_per_code != 0.0f;
-        reading.newtons = (float)(reading.code - zero_code) * newtons_per_code;
+        reading.calibrated = calibration.newtons_per_code != 0.0f;
+        reading.newtons = (float)(reading.code - calibration.zero_code) * calibration.newtons_per_code;
         latest = reading;
         taskEXIT_CRITICAL();
     }
@@ -100,6 +104,22 @@ void lc_latest(lc_reading_t *reading)
     taskENTER_CRITICAL();
     *reading = latest;
     taskEXIT_CRITICAL();
+}
+
+void lc_calibration(lc_calibration_t *copy)
+{
+    taskENTER_CRITICAL();
+    *copy = calibration;
+    taskEXIT_CRITICAL();
+}
+
+// Records a new zero or scale in the data log, so the decoder can follow it.
+static void log_calibration(void)
+{
+    lc_calibration_t now;
+    lc_calibration(&now);
+    record_lc_calibration_t record = { now.zero_code, now.newtons_per_code };
+    datalog_write(RECORD_LC_CALIBRATION, &record, sizeof record);
 }
 
 // Averages the 10 ms readings over one second. Runs in the caller's task.
@@ -126,8 +146,9 @@ bool lc_tare(void)
         return false;
     }
     taskENTER_CRITICAL();
-    zero_code = code;
+    calibration.zero_code = code;
     taskEXIT_CRITICAL();
+    log_calibration();
     return true;
 }
 
@@ -135,11 +156,12 @@ bool lc_calibrate(float newtons)
 {
     int32_t code;
     // Equal codes would divide by zero. Any real load moves the code by thousands.
-    if (!average_one_second(&code) || code == zero_code) {
+    if (!average_one_second(&code) || code == calibration.zero_code) {
         return false;
     }
     taskENTER_CRITICAL();
-    newtons_per_code = newtons / (float)(code - zero_code);
+    calibration.newtons_per_code = newtons / (float)(code - calibration.zero_code);
     taskEXIT_CRITICAL();
+    log_calibration();
     return true;
 }

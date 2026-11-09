@@ -6,6 +6,7 @@
 #include "task.h"
 
 #include "drivers/spi4_bus.h"
+#include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
 
 // The chips convert every ~100 ms by themselves, so reading faster gains nothing.
@@ -41,6 +42,7 @@ void vTcTask(void *pvParameters)
             }
         }
 
+        record_tc_t record = {0};
         for (unsigned i = 0; i < TC_COUNT; i++) {
             tc_reading_t reading = {0};
             reading.present = present[i] && max31856_read((spi4_device_t)(SPI4_TC1 + i), &reading.value);
@@ -49,7 +51,17 @@ void vTcTask(void *pvParameters)
             taskENTER_CRITICAL();
             latest[i] = reading;
             taskEXIT_CRITICAL();
+
+            if (reading.present) {
+                record.tc[i] = (record_tc_channel_t){
+                    .present         = 1,
+                    .faults          = reading.value.faults,
+                    .temp_c          = reading.value.temp_c,
+                    .cold_junction_c = reading.value.cold_junction_c,
+                };
+            }
         }
+        datalog_write(RECORD_TC, &record, sizeof record);
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(TC_PERIOD_MS));
     }

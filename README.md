@@ -181,11 +181,12 @@ openocd/nucleo-h753zi.cfg       probe + target settings
 debug/STM32H753.svd             register map for the debugger's peripheral view
 include/FreeRTOSConfig.h        kernel configuration
 include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
+include/ffconf.h                FatFs options
 linker/STM32H753ZI_FLASH.ld     memory map
 src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
-src/tasks/                      one file per task (interlock, actuators, console, PT, TC, load cell, log, flight stubs)
+src/tasks/                      one file per task (interlock, actuators, console, PT, TC, load cell, SD data log, debug log, flight stubs)
 src/app/                        plain-C logic, unit-tested on the host (test/)
-src/drivers/                    one peripheral or chip each (ADCs, solenoid PWM, servo PWM, stepper, SPI4, MAX31856, W25Q128, ADS1220)
+src/drivers/                    one peripheral or chip each (ADCs, solenoid PWM, servo PWM, stepper, SPI4, MAX31856, W25Q128, ADS1220, SD card)
 src/board/                      HAT/power-board pin map
 src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX, + ADC clock)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)
@@ -194,6 +195,7 @@ src/usart.c                     peripheral init                  (from CubeMX)
 src/stm32h7xx_it.c              core fault handlers              (hand-written)
 cubemx/fc.ioc                   CubeMX source of truth for the above
 lib/                            pinned vendor submodules
+tools/hat_log.py                decodes an SD-card log (LOGnnnn.BIN) into CSV files
 ```
 
 Every `.c` file under `src/`, including subfolders, is compiled automatically,

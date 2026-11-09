@@ -9,6 +9,7 @@
 #include "libc/locks.h"
 #include "drivers/ads1220.h"
 #include "drivers/pt_adc.h"
+#include "drivers/sd_card.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/spi4_bus.h"
 #include "drivers/solenoid_pwm.h"
@@ -21,6 +22,7 @@
 #include "tasks/actuator_task.h"
 #include "tasks/airbrake_task.h"
 #include "tasks/console_task.h"
+#include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
 #include "tasks/lc_task.h"
 #include "tasks/log_task.h"
@@ -57,6 +59,7 @@ int main(void)
     pt_adc_init();
     spi4_bus_init();
     ads1220_init();
+    sd_card_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -67,6 +70,7 @@ int main(void)
 
     actuator_init();
     console_init();
+    datalog_init();
 
     if (xTaskCreate(vInterlockTask,
                     "interlock",
@@ -147,6 +151,16 @@ int main(void)
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    // FatFs and the SD driver nest a few calls deep, hence the bigger stack.
+    if (xTaskCreate(vDatalogTask,
+                    "datalog",
+                    configMINIMAL_STACK_SIZE * 8,
+                    NULL,
+                    PRIORITY_STORAGE,
                     NULL) != pdPASS) {
         Error_Handler();
     }

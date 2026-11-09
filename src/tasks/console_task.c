@@ -13,6 +13,7 @@
 #include "usart.h"
 #include "app/command.h"
 #include "tasks/actuator_task.h"
+#include "tasks/datalog_task.h"
 #include "drivers/max31856.h"
 #include "drivers/pt_adc.h"
 #include "tasks/interlock_task.h"
@@ -42,6 +43,7 @@ static void cmd_stp(int argc, char *argv[]);
 static void cmd_pt(int argc, char *argv[]);
 static void cmd_tc(int argc, char *argv[]);
 static void cmd_lc(int argc, char *argv[]);
+static void cmd_log(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
@@ -54,6 +56,7 @@ static const console_command_t commands[] = {
     { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
     { "tc",     "[stream]: thermocouples",                      cmd_tc     },
     { "lc",     "[stream | tare | cal <N>]: load cell",         cmd_lc     },
+    { "log",    "[start | stop]: record to the SD card",        cmd_log    },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
@@ -136,6 +139,10 @@ void vConsoleTask(void *pvParameters)
         if (key == '\r' || key == '\n') {
             log_write("\r\n", 2);
             line[length] = '\0';
+            // Into the data log as typed (run_line cuts it up).
+            if (length > 0) {
+                datalog_write(RECORD_TEXT, line, length);
+            }
             run_line(line);
             length = 0;
             log_write("> ", 2);
@@ -427,5 +434,26 @@ static void cmd_lc(int argc, char *argv[])
         printf(lc_calibrate(newtons) ? "lc calibrated\r\n" : "lc cal failed: no reading\r\n");
     } else {
         printf("usage: lc [stream | tare | cal <N>]\r\n");
+    }
+}
+
+static void cmd_log(int argc, char *argv[])
+{
+    if (argc == 1) {
+        datalog_status_t status;
+        datalog_status(&status);
+        if (status.file_name[0] == '\0') {
+            printf("log: not recording\r\n");
+            return;
+        }
+        printf("log: %s %s, %lu bytes, %lu records dropped\r\n",
+               status.recording ? "writing" : "stopped, last file", status.file_name,
+               (unsigned long)status.bytes_written, (unsigned long)status.dropped);
+    } else if (argc == 2 && strcmp(argv[1], "start") == 0) {
+        datalog_start();
+    } else if (argc == 2 && strcmp(argv[1], "stop") == 0) {
+        datalog_stop();
+    } else {
+        printf("usage: log [start | stop]\r\n");
     }
 }

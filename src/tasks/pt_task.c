@@ -6,6 +6,7 @@
 #include "main.h"
 #include "app/pt_convert.h"
 #include "drivers/pt_adc.h"
+#include "tasks/datalog_task.h"
 
 // VREF+ is VDDA, 3.3 V on the Nucleo. Only the millivolts depend on it; the
 // ratio and pressure don't.
@@ -56,6 +57,11 @@ void vPtTask(void *pvParameters)
         xTaskNotifyWait(0, 0, &half, portMAX_DELAY);
         const pt_adc_sample_t *block = pt_adc_block(half);
 
+        // The raw samples go to the log as they are.
+        _Static_assert(sizeof(record_pt_t) == sizeof(pt_adc_sample_t) * PT_BLOCK_SAMPLES,
+                       "record_pt_t must match a block");
+        datalog_write(RECORD_PT, block, sizeof(record_pt_t));
+
         for (unsigned i = 0; i < PT_COUNT; i++) {
             // Average the 10 samples. Supply and output were taken together, so
             // their ratio holds even if the supply moved during the block.
@@ -90,4 +96,9 @@ void pt_latest(unsigned pt, pt_reading_t *reading)
     taskENTER_CRITICAL();
     *reading = latest[pt];
     taskEXIT_CRITICAL();
+}
+
+const pt_calibration_t *pt_calibration(unsigned pt)
+{
+    return &calibrations[pt];
 }

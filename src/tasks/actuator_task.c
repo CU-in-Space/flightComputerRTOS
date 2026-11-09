@@ -10,6 +10,7 @@
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
+#include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
 
 #define ACTUATOR_PERIOD_MS  10U
@@ -362,6 +363,21 @@ void vActuatorTask(void *pvParameters)
             stepper_set_awake(false);
             stepper_awake = false;
         }
+
+        // Every pass, so the log shows each output against the sensors.
+        record_actuators_t record = {
+            .interlock        = (uint8_t)interlock,
+            .vbat_mv          = interlock_current_vbat_mv(),
+            .stepper_position = stepper_position(),
+            .stepper_awake    = stepper_awake,
+        };
+        for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
+            record.solenoids |= (uint8_t)(solenoids[i].on << i);
+        }
+        for (unsigned i = 0; i < SERVO_COUNT; i++) {
+            record.servo_us[i] = servos[i].output_us;
+        }
+        datalog_write(RECORD_ACTUATORS, &record, sizeof record);
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ACTUATOR_PERIOD_MS));
     }

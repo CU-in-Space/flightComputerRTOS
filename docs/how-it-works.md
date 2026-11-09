@@ -254,9 +254,10 @@ In [`src/main.c`](../src/main.c):
 | `pt_adc_init()` | sets up ADC1 + ADC2 in dual mode, their DMA and TIM15, and calibrates both; nothing samples yet | |
 | `spi4_bus_init()` | sets up SPI4 and its mutex; the pins stay high impedance until the HAT has power | |
 | `ads1220_init()` | sets up SPI5 and its mutex for the load-cell ADC; pins also wait for HAT power | |
+| `sd_card_init()` | turns on SDMMC1's clock; the card itself starts on `log start` | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
-| `actuator_init()`, `console_init()` | create the actuator command queue; turn on the serial port's receive interrupt | |
+| `actuator_init()`, `console_init()`, `datalog_init()` | create the actuator command queue; turn on the serial port's receive interrupt; create the data log's request semaphore | |
 | `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock. Also switches the HAT's SPI pins (SPI4, SPI5) with ENABLED (HAT powered) | highest application priority |
 | `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED | |
 | `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
@@ -366,6 +367,7 @@ lib/FreeRTOS-Kernel           the RTOS
 lib/stm32h7xx_hal_driver      ST's HAL
 lib/cmsis_device_h7           the H7 register map, startup assembly, SystemInit
 lib/cmsis_core                Cortex-M core definitions
+lib/fatfs                     FatFs (ST's copy), the SD card's file system; configured in include/ffconf.h
 ```
 
 **Generated output — never commit**
