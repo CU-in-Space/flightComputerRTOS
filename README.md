@@ -172,31 +172,109 @@ so the command above is the same on every platform.
 
 ## SD card logging
 
-The `sd_card` task writes a flight log, `FLIGHT.LOG`, to a FAT32 SD card on
-SDMMC1 (4-bit, PC8–PC12 and PD2). Any task can log values. Register each
-channel in `main()` before the scheduler starts, then log from the task:
+The flight computer records data to a microSD card so we can look at the
+flight afterwards. Any task can record ("log") a value; a dedicated task,
+`sd_card` ([`src/tasks/sd_card_task.c`](src/tasks/sd_card_task.c)), is the only
+code that touches the card. It writes everything into one file, `FLIGHT.LOG`,
+and you turn that file into a spreadsheet (CSV) on your computer afterwards.
+
+### 1. Wire the card (bench setup)
+
+The card uses the chip's SD card peripheral, **SDMMC1**, with 4 data lines.
+All the pins are on the NUCLEO's **CN8** header. You need a microSD breakout
+that brings out all 8 card pins (SPI-only "SD modules" won't work), plus five
+47 kΩ resistors and one 33 Ω resistor.
+
+| Signal | Nucleo pin | CN8 pin | Extra part |
+|---|---|---|---|
+| D0 | PC8 | 2 | 47 kΩ to 3.3 V |
+| D1 | PC9 | 4 | 47 kΩ to 3.3 V |
+| D2 | PC10 | 6 | 47 kΩ to 3.3 V |
+| D3 | PC11 | 8 | 47 kΩ to 3.3 V |
+| CLK | PC12 | 10 | 33 Ω in series, near the Nucleo; no pull-up |
+| CMD | PD2 | 12 | 47 kΩ to 3.3 V |
+| 3.3 V | 3V3 | 7 | 100 nF and 10 µF to GND, at the breakout |
+| GND | GND | 13 | |
+
+> [!WARNING]
+> CN8 pin 9 is **5 V**, right next to 3.3 V on pin 7. 5 V will destroy the card.
+
+Two rules learned the hard way on the bench:
+
+- **Keep the six signal wires short** (under ~10 cm). Long jumper wires caused
+  read errors and every multi-sector write to fail, even at slow speeds.
+- **Unplug USB before touching any wire.** Moving a wire while powered can
+  leave the card unresponsive until the next power cycle.
+
+### 2. Prepare the card
+
+Use a microSD card of **32 GB or less, formatted FAT32** (cards over 32 GB come
+as exFAT, which isn't supported). Leave at least 128 MB free. That's all: on
+its first boot the flight computer creates `FLIGHT.LOG` (128 MB) by itself.
+Starting fresh is just deleting `FLIGHT.LOG` on your computer.
+
+### 3. Log a value from your code
+
+Each value you record is a **channel** with a name and a type
+(`SD_LOG_FLOAT` or `SD_LOG_INT32`). Register channels in `main()`, **before**
+`vTaskStartScheduler()`, and keep the number you get back:
 
 ```c
-static int baro_alt;
-baro_alt = sd_log_register("baro_alt_m", SD_LOG_FLOAT);   /* in main() */
+#include "tasks/sd_card_task.h"
 
-sd_log_float(baro_alt, altitude);                         /* in the task */
+static int baro_alt;   /* channel number, used when logging */
+
+int main(void)
+{
+    ...
+    baro_alt = sd_log_register("baro_alt_m", SD_LOG_FLOAT);
+    ...
+    vTaskStartScheduler();
+}
 ```
 
-Logging never blocks; if the card falls behind, records are dropped and the
-count is kept in the log. The file is created once at 128 MB and then only
-overwritten sector by sector, so a power cut loses at most the last ~100 ms
-and never damages the file system. Each boot adds a session. To read it, copy
-`FLIGHT.LOG` off the card and run:
+Then, in your task, log the value whenever you have a new one:
+
+```c
+sd_log_float(baro_alt, altitude);
+```
+
+Each value is stored with the time it was logged (milliseconds since boot).
+Good to know:
+
+- **Logging never waits for the card**, so it's safe in time-critical tasks.
+  If the card falls behind, values are dropped and the number dropped is
+  saved in the log. Expect about a second of drops on the very first boot
+  with a new card, while `FLIGHT.LOG` is created.
+- `sd_log_register()` returns **-1** if it's called after the scheduler has
+  started, or if all 24 channels are taken. Names are cut to 15 characters.
+- Don't call the logging functions from an interrupt handler.
+
+### 4. Get the data off
+
+Put the card in your computer, copy `FLIGHT.LOG` off it, and run:
 
 ```bash
 python3 tools/sd_log_decode.py FLIGHT.LOG > flight.csv
 ```
 
-Bench wiring: keep the six SD wires short. Long jumpers caused CRC errors and
-failed writes even at a few MHz. Unplug USB before touching the wiring:
-disturbing the bus while powered can leave the card unresponsive until a
-power cycle.
+`flight.csv` has one row per logged value, with the columns `session`,
+`t_ms`, `channel` and `value`. Every power-up starts a new **session**, so
+`t_ms` restarts from 0 in each one. The script also prints a summary per
+session (how many values, how many dropped, which channels).
+
+### What happens if things go wrong in flight
+
+- **Power cut:** everything written up to the last ~0.1 s is kept, and the
+  card stays readable. Bench tested with repeated power pulls.
+- **Card glitch or loose wire:** the task keeps retrying and carries on
+  logging once the card answers again. Values from the gap are dropped (and
+  counted).
+- **No card at all:** nothing is logged, but the rest of the flight computer
+  runs normally.
+
+There's no on-board indicator yet. To check that logging works, run the
+board for a bit, then look for `FLIGHT.LOG` on the card and decode it.
 
 ---
 
