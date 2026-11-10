@@ -127,12 +127,18 @@ static bool transfer(const uint8_t *tx, uint16_t tx_length, uint8_t *rx, uint16_
         return false;
     }
 
+    // On the bench the ADS1220 reset whenever a task broke in with chip select low,
+    // so nothing may. A read takes 15 µs. TIM6 keeps running for the HAL timeouts.
+    taskENTER_CRITICAL();
     HAL_GPIO_WritePin(LC_CS_GPIO_Port, LC_CS_Pin, GPIO_PIN_RESET);
     bool ok = HAL_SPI_Transmit(&hspi5, (uint8_t *)tx, tx_length, TIMEOUT_MS) == HAL_OK;
     if (ok && rx_length > 0) {
-        ok = HAL_SPI_Receive(&hspi5, rx, rx_length, TIMEOUT_MS) == HAL_OK;
+        // Clocks out zeros so DIN stays driven low while data comes back.
+        static const uint8_t zeros[4] = {0};
+        ok = HAL_SPI_TransmitReceive(&hspi5, (uint8_t *)zeros, rx, rx_length, TIMEOUT_MS) == HAL_OK;
     }
     HAL_GPIO_WritePin(LC_CS_GPIO_Port, LC_CS_Pin, GPIO_PIN_SET);
+    taskEXIT_CRITICAL();
 
     xSemaphoreGive(bus_mutex);
     return ok;
