@@ -10,13 +10,15 @@
 
 #include "main.h"
 #include "ff.h"
+#include "app/flash_log.h"
+#include "app/stand.h"
 #include "drivers/pt_adc.h"
 #include "tasks/interlock_task.h"
 #include "tasks/lc_task.h"
 #include "tasks/pt_task.h"
 
-// About 4 s of records at ~16 kB/s, for when the card stalls. A power of two, so
-// the free-running counters below stay right when they wrap.
+// About 4 s of records at ~16 kB/s, for when the card or flash stalls. A power of
+// two, so the free-running counters below stay right when they wrap.
 #define RING_SIZE   65536U
 #define PERIOD_MS   100U    // how often the buffer is written out
 #define SYNC_MS     1000U   // how often the file is flushed
@@ -26,15 +28,21 @@
 
 static TaskHandle_t datalog_task_handle;
 static SemaphoreHandle_t request_done;   // given after each start or stop request
+static SemaphoreHandle_t request_mutex;  // one request at a time: console and radio both ask
 static volatile bool request_ok;
 
-// Records wait here for the card. head counts every byte ever put in, tail every
-// byte taken out, so head - tail is what's waiting, even across a wrap.
+// Records wait here for the card and the flash. head counts every byte ever put
+// in, each tail every byte taken out, so head - tail is what's waiting, even
+// across a wrap.
 static uint8_t ring[RING_SIZE];
-static volatile uint32_t head;   // written by any task, in critical sections
-static volatile uint32_t tail;   // written only by this task
+static volatile uint32_t head;         // written by any task, in critical sections
+static volatile uint32_t sd_tail;      // the tails are written only by this task
+static volatile uint32_t flash_tail;
 
-static volatile bool recording;
+// Each stops on its own failure. Recording means at least one is still going.
+static volatile bool sd_active;
+static volatile bool flash_active;
+
 static datalog_status_t status;   // copied in critical sections
 
 static FATFS fs;
@@ -43,9 +51,24 @@ static FIL file;
 void datalog_init(void)
 {
     request_done = xSemaphoreCreateBinary();
-    if (request_done == NULL) {
+    request_mutex = xSemaphoreCreateMutex();
+    if (request_done == NULL || request_mutex == NULL) {
         Error_Handler();
     }
+}
+
+static bool is_recording(void)
+{
+    return sd_active || flash_active;
+}
+
+// Room left in the ring. Whichever of the two is further behind decides.
+// Called in a critical section.
+static uint32_t free_space(void)
+{
+    uint32_t sd_waiting = sd_active ? head - sd_tail : 0;
+    uint32_t flash_waiting = flash_active ? head - flash_tail : 0;
+    return RING_SIZE - (sd_waiting > flash_waiting ? sd_waiting : flash_waiting);
 }
 
 // Copies into the ring at head, wrapping at the end. Called in a critical section.
@@ -58,9 +81,18 @@ static void copy_in(const void *data, size_t length)
     head += length;
 }
 
+// Copies out of the ring from a free-running position, wrapping at the end.
+static void copy_out(uint32_t from, void *data, size_t length)
+{
+    size_t at = from % RING_SIZE;
+    size_t first = length < RING_SIZE - at ? length : RING_SIZE - at;
+    memcpy(data, &ring[at], first);
+    memcpy((uint8_t *)data + first, ring, length - first);
+}
+
 bool datalog_write(record_type_t type, const void *payload, size_t length)
 {
-    if (!recording) {
+    if (!is_recording()) {
         return false;
     }
 
@@ -71,7 +103,8 @@ bool datalog_write(record_type_t type, const void *payload, size_t length)
         .length  = (uint8_t)length,
         .time_ms = pdTICKS_TO_MS(xTaskGetTickCount()),
     };
-    bool fits = recording && RING_SIZE - (head - tail) >= sizeof header + length;
+    bool recording = is_recording();
+    bool fits = recording && free_space() >= sizeof header + length;
     if (fits) {
         copy_in(&header, sizeof header);
         copy_in(payload, length);
@@ -86,9 +119,12 @@ bool datalog_write(record_type_t type, const void *payload, size_t length)
 // the outcome first, so it comes out before the console's next prompt.
 static bool request(uint32_t bit)
 {
+    xSemaphoreTake(request_mutex, portMAX_DELAY);
     xTaskNotify(datalog_task_handle, bit, eSetBits);
     xSemaphoreTake(request_done, portMAX_DELAY);
-    return request_ok;
+    bool ok = request_ok;
+    xSemaphoreGive(request_mutex);
+    return ok;
 }
 
 bool datalog_start(void)
@@ -136,14 +172,9 @@ static bool next_file_name(char name[13])
     return true;
 }
 
-// Mounts the card, opens a new file and starts taking records.
-static bool start_file(void)
+// Mounts the card and opens a new file. Says why if it can't.
+static bool open_sd_file(char name[13])
 {
-    if (interlock_current_state() != INTERLOCK_ENABLED) {
-        printf("log: HAT has no power\r\n");
-        return false;
-    }
-
     // Mounting starts the card (disk_initialize in sd_card.c).
     FRESULT result = f_mount(&fs, "", 1);
     if (result != FR_OK) {
@@ -158,10 +189,32 @@ static bool start_file(void)
         return false;
     }
 
-    char name[13];
     if (!next_file_name(name) || f_open(&file, name, FA_WRITE | FA_CREATE_NEW) != FR_OK) {
         printf("log: can't create a file\r\n");
         f_mount(NULL, "", 0);
+        return false;
+    }
+    return true;
+}
+
+_Static_assert(sizeof(record_names_t) == CHANNEL_COUNT * NAME_SIZE, "RECORD_NAMES holds every channel's name");
+
+// Every channel's name on this stand, as one record.
+static void write_names(void)
+{
+    record_names_t names = { 0 };
+    for (unsigned channel = 0; channel < CHANNEL_COUNT; channel++) {
+        strncpy(names.names[channel], stand_channel_name(channel), NAME_SIZE - 1);
+    }
+    datalog_write(RECORD_NAMES, &names, sizeof names);
+}
+
+// Opens a new SD file and flash run and starts taking records. One of the two is
+// enough: the flash is there for when the card isn't.
+static bool start_recording(void)
+{
+    if (interlock_current_state() != INTERLOCK_ENABLED) {
+        printf("log: HAT has no power\r\n");
         return false;
     }
 
@@ -173,32 +226,55 @@ static bool start_file(void)
         start.pt[i] = (record_pt_calibration_t){ pt->ratio_at_zero, pt->ratio_at_full, pt->full_scale };
     }
     lc_calibration_t lc;
-    lc_calibration(&lc);
+    lc_calibration(0, &lc);
     start.lc = (record_lc_calibration_t){ lc.zero_code, lc.newtons_per_code };
+    lc_calibration(1, &lc);
+    start.lc2 = (record_lc_calibration_t){ lc.zero_code, lc.newtons_per_code };
+
+    char name[13] = "";
+    bool sd = open_sd_file(name);
+
+    uint32_t run = 0;
+    bool flash = flash_log_begin(&start, &run);
+    if (!flash) {
+        printf("log: flash not responding, no backup\r\n");
+    }
+    if (!sd && !flash) {
+        return false;
+    }
 
     // Queued in the same critical section that turns recording on, so it's
     // always the first record. (Critical sections nest.)
     taskENTER_CRITICAL();
     head = 0;
-    tail = 0;
-    status = (datalog_status_t){ .recording = true };
+    sd_tail = 0;
+    flash_tail = 0;
+    status = (datalog_status_t){ .recording = true, .flash_run = run };
     strcpy(status.file_name, name);
-    recording = true;
+    sd_active = sd;
+    flash_active = flash;
     datalog_write(RECORD_FILE_START, &start, sizeof start);
+    write_names();
     taskEXIT_CRITICAL();
 
-    printf("log: writing %s\r\n", name);
+    if (sd && flash) {
+        printf("log: writing %s and flash run %lu\r\n", name, (unsigned long)run);
+    } else if (sd) {
+        printf("log: writing %s\r\n", name);
+    } else {
+        printf("log: writing flash run %lu only\r\n", (unsigned long)run);
+    }
     return true;
 }
 
 // Writes out everything waiting in the ring. False on a card error.
-static bool drain(void)
+static bool drain_sd(void)
 {
     uint32_t end = head;
-    while (tail != end) {
+    while (sd_tail != end) {
         // Up to the end of the ring; the rest, from the start, next time round.
-        size_t at = tail % RING_SIZE;
-        size_t length = end - tail;
+        size_t at = sd_tail % RING_SIZE;
+        size_t length = end - sd_tail;
         if (length > RING_SIZE - at) {
             length = RING_SIZE - at;
         }
@@ -207,7 +283,7 @@ static bool drain(void)
         if (f_write(&file, &ring[at], length, &written) != FR_OK || written != length) {
             return false;
         }
-        tail += length;
+        sd_tail += length;
 
         taskENTER_CRITICAL();
         status.bytes_written += length;
@@ -216,20 +292,84 @@ static bool drain(void)
     return true;
 }
 
-// Stops taking records. With close, writes out the rest and closes the file;
-// without (the card is gone), just lets it go: the card keeps what the last
-// flush wrote.
-static bool end_file(bool close)
+// Hands what's waiting to the flash log, one whole record at a time. head only
+// ever moves by whole records. False on a flash error.
+static bool drain_flash(void)
+{
+    uint8_t record[sizeof(record_header_t) + UINT8_MAX];
+    uint32_t end = head;
+
+    while (flash_tail != end) {
+        record_header_t header;
+        copy_out(flash_tail, &header, sizeof header);
+        size_t length = sizeof header + header.length;
+        copy_out(flash_tail, record, length);
+
+        if (!flash_log_append(record, length)) {
+            return false;
+        }
+        flash_tail += length;
+    }
+    return true;
+}
+
+static void stop_taking_records(void)
 {
     taskENTER_CRITICAL();
-    recording = false;
+    sd_active = false;
+    flash_active = false;
     status.recording = false;
     taskEXIT_CRITICAL();
+}
 
-    bool ok = close && drain() && f_close(&file) == FR_OK;
+// Stops taking records, writes out the rest and closes both.
+static bool stop_recording(void)
+{
+    bool sd = sd_active;
+    bool flash = flash_active;
+    stop_taking_records();
+
+    bool sd_ok = !sd || (drain_sd() && f_close(&file) == FR_OK);
+    bool flash_ok = !flash || (drain_flash() && flash_log_end());
+    if (sd) {
+        f_mount(NULL, "", 0);
+    }
+
+    if (!sd_ok) {
+        printf("log: SD write failed, %s may be cut short\r\n", status.file_name);
+    } else if (sd) {
+        printf("log: closed %s, %lu bytes\r\n", status.file_name, (unsigned long)status.bytes_written);
+    }
+    if (!flash_ok) {
+        printf("log: flash write failed, run %lu may be cut short\r\n", (unsigned long)status.flash_run);
+    } else if (flash) {
+        printf("log: closed flash run %lu\r\n", (unsigned long)status.flash_run);
+    }
+    printf("log: %lu records dropped\r\n", (unsigned long)status.dropped);
+    return sd_ok && flash_ok;
+}
+
+// The card failed: the flash, if it's still going, carries on alone.
+static void sd_failed(void)
+{
+    printf("log: SD write failed, %s kept up to the last flush\r\n", status.file_name);
+    taskENTER_CRITICAL();
+    sd_active = false;
+    status.file_name[0] = '\0';
+    status.recording = flash_active;
+    taskEXIT_CRITICAL();
     f_mount(NULL, "", 0);
-    tail = head;
-    return ok;
+}
+
+// The flash failed: the card, if it's still going, carries on alone.
+static void flash_failed(void)
+{
+    printf("log: flash write failed, run %lu stops here\r\n", (unsigned long)status.flash_run);
+    taskENTER_CRITICAL();
+    flash_active = false;
+    status.flash_run = 0;
+    status.recording = sd_active;
+    taskEXIT_CRITICAL();
 }
 
 void vDatalogTask(void *pvParameters)
@@ -244,55 +384,59 @@ void vDatalogTask(void *pvParameters)
         // until a request.
         uint32_t requests = 0;
         xTaskNotifyWait(0, START_BIT | STOP_BIT, &requests,
-                        recording ? pdMS_TO_TICKS(PERIOD_MS) : portMAX_DELAY);
+                        is_recording() ? pdMS_TO_TICKS(PERIOD_MS) : portMAX_DELAY);
         uint32_t now_ms = pdTICKS_TO_MS(xTaskGetTickCount());
 
         if (requests & STOP_BIT) {
-            if (!recording) {
+            if (!is_recording()) {
                 printf("log: not recording\r\n");
                 request_ok = false;
-            } else if (end_file(true)) {
-                printf("log: closed %s, %lu bytes, %lu records dropped\r\n", status.file_name,
-                       (unsigned long)status.bytes_written, (unsigned long)status.dropped);
-                request_ok = true;
             } else {
-                printf("log: SD write failed, %s may be cut short\r\n", status.file_name);
-                request_ok = false;
+                request_ok = stop_recording();
             }
             xSemaphoreGive(request_done);
         }
 
         if (requests & START_BIT) {
-            if (recording) {
-                printf("log: already writing %s\r\n", status.file_name);
+            if (is_recording()) {
+                printf("log: already recording\r\n");
                 request_ok = false;
             } else {
-                request_ok = start_file();
+                request_ok = start_recording();
                 last_sync_ms = now_ms;
             }
             xSemaphoreGive(request_done);
         }
 
-        if (!recording) {
+        if (!is_recording()) {
             continue;
         }
 
-        // The card has no power without the HAT's. Stop rather than wait for
-        // each write to time out.
+        // The card and flash have no power without the HAT's. Stop rather than
+        // wait for each write to time out.
         if (interlock_current_state() != INTERLOCK_ENABLED) {
-            end_file(false);
-            printf("log: HAT lost power, %s kept up to the last flush\r\n", status.file_name);
+            bool sd = sd_active;
+            stop_taking_records();
+            if (sd) {
+                f_mount(NULL, "", 0);
+            }
+            printf("log: HAT lost power, the card keeps up to the last flush\r\n");
             continue;
         }
 
-        bool ok = drain();
-        if (ok && now_ms - last_sync_ms >= SYNC_MS) {
-            ok = f_sync(&file) == FR_OK;
-            last_sync_ms = now_ms;
+        if (sd_active) {
+            bool ok = drain_sd();
+            if (ok && now_ms - last_sync_ms >= SYNC_MS) {
+                ok = f_sync(&file) == FR_OK;
+                last_sync_ms = now_ms;
+            }
+            if (!ok) {
+                sd_failed();
+            }
         }
-        if (!ok) {
-            end_file(false);
-            printf("log: SD write failed, %s kept up to the last flush\r\n", status.file_name);
+
+        if (flash_active && !drain_flash()) {
+            flash_failed();
         }
     }
 }

@@ -4,7 +4,9 @@ Firmware scaffold for the CU InSpace flight computer, targeting an
 **STM32H753ZIT6** on a **NUCLEO-H753ZI**. It builds, flashes, and runs the
 FreeRTOS scheduler at 480 MHz. A **heartbeat task** blinks LD1 (green) at 1 Hz:
 a steady blink means the scheduler is alive, a frozen LED means a hang or fault.
-The Sensor HAT and power-board firmware is being added in stages on top.
+On top of that sits the static-fire stand's firmware: the Sensor HAT and power
+board, commanded by hand from the launch box over a LoRa link. See
+[The static-fire stand](#the-static-fire-stand).
 
 **New to this?** Read [docs/how-it-works.md](docs/how-it-works.md) first: the build
 chain, flash chain, boot sequence and code layout, explained from fundamentals.
@@ -171,6 +173,78 @@ so the command above is the same on every platform.
 
 ---
 
+## The static-fire stand
+
+Power board → Sensor HAT → Nucleo is one **stand**. There are two, numbered 1
+and 2, and one launch box. Each stand reads its sensors, drives its valves,
+logs to its SD card (with a backup in the HAT's flash chip), and follows the
+launch box's switches over the radio. There is no built-in sequence: the
+operator at the launch box runs the test by hand.
+
+| Task | Priority | What it does |
+|---|---|---|
+| interlock | 5 | checks the battery voltage every 10 ms. Outside 6.9–13.3 V nothing may be on, and the HAT's pins go high impedance |
+| actuator | 4 | owns the 4 solenoids, 4 servos and the stepper. Takes commands from a queue every 10 ms |
+| pt, tc, lc | 3 | pressures (1 kHz), thermocouples (10 Hz), load cells (one at about 1 kHz, one at 10 Hz) |
+| radio | 2 | the link to the launch box: makes the outputs that drive valves follow its switch positions, answers with telemetry, goes safe on SAFE or after 60 s without it |
+| remote | 2 | runs the command lines that arrive over the radio |
+| console | 2 | the same commands, typed at the ST-LINK serial port (115200 8N1) |
+| datalog | 2 | writes every sample to the SD card and the flash backup between `log start` (typed, or the launch box arming) and `log stop` |
+| log | 1 | `printf` output to the serial port |
+
+Commands, at the serial console or sent from the launch box:
+
+| Command | |
+|---|---|
+| `help` | list commands |
+| `status` | interlock, battery and every actuator |
+| `radio` | the link: packets received, rejected and sent, signal strength |
+| `radio send` | transmit one telemetry packet, to test the transmitter |
+| `off` | every actuator off |
+| `safe` | every actuator to its abort position: a valve goes where `RADIO_VALVE_ABORT` in `src/app/radio_link.h` says, everything else off |
+| `sol <1-4 or name> <on\|off>` | a solenoid |
+| `srv <1-4 or name> <us\|off>` | a servo's pulse width |
+| `stp home \| zero \| stop \| go <step> \| jog <steps>` | the stepper |
+| `pt`, `tc`, `lc` | one reading. Add `stream` for a running display (serial console only) |
+| `lc tare <1\|2>`, `lc cal <1\|2> <N>` | zero a load cell; calibrate it with a known load. The cell is its number or name. Both are kept in flash |
+| `log`, `log start`, `log stop` | the data log: SD card and flash backup, decoded by `tools/hat_log.py` |
+| `flash`, `flash dump [run]` | list the runs in the flash backup; send one to `tools/flash_dump.py` (serial console only) |
+| `stand`, `stand 2` | which stand this is, and what's wired to it: every name and valve. `stand 2` changes the number (serial console only) |
+
+**Names and valves** are one table for both stands,
+[`src/app/stand_table.c`](src/app/stand_table.c). To change one, edit the
+table, run the host tests (they check it) and flash. Names show in every print
+and in the log's CSV columns, and work in commands: `sol vent on`. The only
+thing a stand saves is its number, in the HAT's flash, so `stand 2` needs the
+battery in.
+
+**The radio link** is described in [docs/radio-link.md](docs/radio-link.md).
+Its settings and packets are one header,
+[`src/app/radio_link.h`](src/app/radio_link.h). The launch box sketch
+(`lunch-box/launch_box/`) uses a copy of it: change it here, then copy it
+there.
+
+**Before a static fire**
+1. Fill in `src/app/stand_table.c`: a name for each sensor, and for every
+   output that drives a valve or an igniter, which one. Run the host tests
+   and flash both stands. At the second one type `stand 2`, once. `stand`
+   lists what a stand has. Check `RADIO_VALVE_ABORT` in
+   `src/app/radio_link.h` is where each valve must go on an abort.
+2. Set `E22_TX_POWER_DBM` in `src/drivers/e22.h` for the range (it ships
+   at bench power), build and flash. `radio` prints the setting.
+3. At each stand: FAT32 card in, battery on, antenna on. `status` shows
+   ENABLED, `radio` shows `listening`.
+4. Launch box on, key off: each stand prints `radio: link up`. `safe` at each
+   console and look at the valves: that's the abort.
+5. Nothing to type for the data log: each stand starts it when the launch
+   box arms (its key goes in). `log start` at a console starts it earlier.
+6. ARM plug in last, before leaving the stand. Run the test from the launch
+   box. Its abort button is the abort; so is 60 s without the launch box.
+7. `log stop`, then `python3 tools/hat_log.py LOGnnnn.BIN --out <folder>`. If
+   the card failed, `tools/flash_dump.py` gets the same run out of the flash.
+
+---
+
 ## Layout
 
 ```
@@ -184,9 +258,9 @@ include/stm32h7xx_hal_conf.h    HAL module enables, HSE_VALUE
 include/ffconf.h                FatFs options
 linker/STM32H753ZI_FLASH.ld     memory map
 src/main.c                      startup ordering, heartbeat task, FreeRTOS hooks
-src/tasks/                      one file per task (interlock, actuators, console, PT, TC, load cell, SD data log, debug log, flight stubs)
-src/app/                        plain-C logic, unit-tested on the host (test/)
-src/drivers/                    one peripheral or chip each (ADCs, solenoid PWM, servo PWM, stepper, SPI4, MAX31856, W25Q128, ADS1220, SD card)
+src/tasks/                      one file per task (interlock, actuators, console, radio, remote commands, PT, TC, load cell, SD data log, debug log, flight stubs)
+src/app/                        plain-C logic, unit-tested on the host (test/); the log's and the radio link's formats; stand_table.c, the names and valves of both stands
+src/drivers/                    one peripheral or chip each (ADCs, solenoid PWM, servo PWM, stepper, SPI4, MAX31856, W25Q128, ADS1220, SD card, E22 radio module)
 src/board/                      HAT/power-board pin map
 src/system_clock.c              SystemClock_Config + MPU_Config  (from CubeMX, + ADC clock)
 src/stm32h7xx_hal_msp.c         peripheral MSP init              (from CubeMX)
@@ -194,8 +268,10 @@ src/gpio.c                      every port clock, plain outputs  (hand-written)
 src/usart.c                     peripheral init                  (from CubeMX)
 src/stm32h7xx_it.c              core fault handlers              (hand-written)
 cubemx/fc.ioc                   CubeMX source of truth for the above
+docs/radio-link.md              the radio link, for whoever programs the launch box
 lib/                            pinned vendor submodules
 tools/hat_log.py                decodes an SD-card log (LOGnnnn.BIN) into CSV files
+tools/flash_dump.py             copies a run out of the HAT's backup flash, for hat_log.py
 ```
 
 Every `.c` file under `src/`, including subfolders, is compiled automatically,

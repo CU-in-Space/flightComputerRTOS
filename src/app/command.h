@@ -4,12 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// What the actuator task accepts on actuator_queue: from the serial console now,
-// and from the radio and the static-fire sequence later.
+// What the actuator task accepts on actuator_queue. The console's commands send
+// them, whether typed or received over the radio, and so does the radio task itself.
 
 typedef enum {
     COMMAND_STATUS,
     COMMAND_ALL_OFF,
+    COMMAND_SAFE,       // every output to its safe state: abort, or the radio link lost
     COMMAND_SOLENOID,
     COMMAND_SERVO,
     COMMAND_STEPPER_HOME,

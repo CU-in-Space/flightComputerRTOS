@@ -10,10 +10,12 @@
 #include "drivers/ads1220.h"
 #include "drivers/pt_adc.h"
 #include "drivers/sd_card.h"
+#include "drivers/w25q128.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/spi4_bus.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
+#include "drivers/e22.h"
 #include "drivers/vbat_adc.h"
 
 #include "FreeRTOS.h"
@@ -28,6 +30,8 @@
 #include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
 #include "tasks/pt_task.h"
+#include "tasks/radio_task.h"
+#include "tasks/remote_task.h"
 #include "tasks/tc_task.h"
 #include "tasks/task_priorities.h"
 
@@ -58,8 +62,10 @@ int main(void)
     stepper_init();
     pt_adc_init();
     spi4_bus_init();
+    w25q128_init();
     ads1220_init();
     sd_card_init();
+    e22_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
@@ -71,6 +77,7 @@ int main(void)
     actuator_init();
     console_init();
     datalog_init();
+    remote_init();
 
     if (xTaskCreate(vInterlockTask,
                     "interlock",
@@ -170,6 +177,25 @@ int main(void)
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
                     PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vRadioTask,
+                    "radio",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_RADIO,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    // Runs the console's commands, so it gets the console's stack and priority.
+    if (xTaskCreate(vRemoteTask,
+                    "remote",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_CONSOLE,
                     NULL) != pdPASS) {
         Error_Handler();
     }

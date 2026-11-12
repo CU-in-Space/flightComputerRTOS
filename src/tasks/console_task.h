@@ -8,4 +8,8 @@
 void console_init(void);
 void vConsoleTask(void *pvParameters);
 
+// Runs one command line and copies it to the data log. Cuts the line up in
+// place. The remote task calls it too, for lines that came over the radio.
+void console_run_line(char *line);
+
 #endif /* TASKS_CONSOLE_TASK_H */

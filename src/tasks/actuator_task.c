@@ -7,11 +7,15 @@
 
 #include "main.h"
 #include "app/command.h"
+#include "app/stand.h"
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
 #include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
+
+_Static_assert(SOLENOID_COUNT == OUTPUT_COUNT / 2 && SOLENOID_COUNT + SERVO_COUNT == OUTPUT_COUNT,
+               "app/stand.h: outputs are SOL1-4 then SRV1-4");
 
 #define ACTUATOR_PERIOD_MS  10U
 #define QUEUE_DEPTH         8U
@@ -84,6 +88,8 @@ static stepper_job_t stepper_job;
 static bool stepper_awake;
 static bool stepper_homed;   // position counts from home, or from "stp zero"
 
+static record_actuators_t latest;   // copied in critical sections
+
 void actuator_init(void)
 {
     actuator_queue = xQueueCreate(QUEUE_DEPTH, sizeof(command_t));
@@ -92,13 +98,37 @@ void actuator_init(void)
     }
 }
 
+// "sol 3 vent on": the number, then the name if it has one.
+static void print_solenoid(unsigned i, bool on)
+{
+    char name[NAME_SIZE + 1];
+    stand_spaced_name(KIND_SOL, i, name);
+    printf("sol %u%s %s\r\n", i + 1, name, on ? "on" : "off");
+}
+
 static void print_servo(unsigned i, uint16_t pulse_us)
 {
+    char name[NAME_SIZE + 1];
+    stand_spaced_name(KIND_SRV, i, name);
     if (pulse_us == 0) {
-        printf("srv %u off\r\n", i + 1);
+        printf("srv %u%s off\r\n", i + 1, name);
     } else {
-        printf("srv %u %u us\r\n", i + 1, pulse_us);
+        printf("srv %u%s %u us\r\n", i + 1, name, pulse_us);
     }
+}
+
+// A repeated "on" keeps the original start, so it doesn't peak again.
+static void set_solenoid(unsigned i, bool on, uint32_t now_ms)
+{
+    if (on && !solenoids[i].on) {
+        solenoids[i].on_since_ms = now_ms;
+    }
+    solenoids[i].on = on;
+}
+
+static bool servo_in_limits(unsigned i, uint16_t pulse_us)
+{
+    return pulse_us == 0 || (pulse_us >= servo_limits[i].min_us && pulse_us <= servo_limits[i].max_us);
 }
 
 // Wakes the driver if it's asleep and starts a move.
@@ -143,7 +173,7 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
         printf("interlock %s, VBAT %lu mV\r\n", interlock_state_names[interlock],
                (unsigned long)interlock_current_vbat_mv());
         for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
-            printf("sol %u %s\r\n", i + 1, solenoids[i].on ? "on" : "off");
+            print_solenoid(i, solenoids[i].on);
         }
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             print_servo(i, servos[i].target_us);
@@ -164,6 +194,32 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
         printf("all off commanded\r\n");
         break;
 
+    case COMMAND_SAFE:
+        // Each output goes where its valve goes on an abort (the stand's table
+        // and RADIO_VALVE_ABORT). One that drives no valve goes off.
+        for (unsigned output = 0; output < OUTPUT_COUNT; output++) {
+            const output_t *row = stand_output(output);
+            uint16_t drive = 0;
+            // Without the interlock nothing may be on, so then it's the same as "off".
+            if (interlock != INTERLOCK_ENABLED) {
+                drive = 0;
+            } else if (!stand_safe_drive(output, row, &drive)) {
+                continue;   // this valve stays as it is
+            }
+
+            if (output < SOLENOID_COUNT) {
+                set_solenoid(output, drive != 0, now_ms);
+            } else if (servo_in_limits(output - SOLENOID_COUNT, drive)) {
+                servos[output - SOLENOID_COUNT].target_us = drive;
+            } else {
+                servos[output - SOLENOID_COUNT].target_us = 0;
+                printf("srv %u safe position is outside its limits: off\r\n", output - SOLENOID_COUNT + 1);
+            }
+        }
+        stepper_release();
+        printf("safe state commanded\r\n");
+        break;
+
     case COMMAND_SOLENOID: {
         // Refuse "on" unless the interlock is ENABLED. Off is always allowed.
         if (command->on && interlock != INTERLOCK_ENABLED) {
@@ -171,13 +227,8 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
                    interlock_state_names[interlock]);
             break;
         }
-        solenoid_t *solenoid = &solenoids[command->channel];
-        // A repeated "on" keeps the original start, so it doesn't peak again.
-        if (command->on && !solenoid->on) {
-            solenoid->on_since_ms = now_ms;
-        }
-        solenoid->on = command->on;
-        printf("sol %u %s\r\n", command->channel + 1, command->on ? "on" : "off");
+        set_solenoid(command->channel, command->on, now_ms);
+        print_solenoid(command->channel, command->on);
         break;
     }
 
@@ -188,11 +239,9 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
                    interlock_state_names[interlock]);
             break;
         }
-        const servo_limits_t *limits = &servo_limits[command->channel];
-        if (command->pulse_us != 0
-            && (command->pulse_us < limits->min_us || command->pulse_us > limits->max_us)) {
+        if (!servo_in_limits(command->channel, command->pulse_us)) {
             printf("srv %u refused: limits are %u-%u us\r\n", command->channel + 1,
-                   limits->min_us, limits->max_us);
+                   servo_limits[command->channel].min_us, servo_limits[command->channel].max_us);
             break;
         }
         servos[command->channel].target_us = command->pulse_us;
@@ -379,6 +428,17 @@ void vActuatorTask(void *pvParameters)
         }
         datalog_write(RECORD_ACTUATORS, &record, sizeof record);
 
+        taskENTER_CRITICAL();
+        latest = record;
+        taskEXIT_CRITICAL();
+
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ACTUATOR_PERIOD_MS));
     }
+}
+
+void actuator_latest(record_actuators_t *copy)
+{
+    taskENTER_CRITICAL();
+    *copy = latest;
+    taskEXIT_CRITICAL();
 }

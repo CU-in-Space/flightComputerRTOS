@@ -13,3 +13,6 @@
 [submodule "lib/fatfs"]
 	path = lib/fatfs
 	url = https://github.com/STMicroelectronics/stm32_mw_fatfs.git
+[submodule "lib/sx126x_driver"]
+	path = lib/sx126x_driver
+	url = https://github.com/Lora-net/sx126x_driver.git

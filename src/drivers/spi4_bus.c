@@ -85,6 +85,8 @@ void spi4_bus_power(bool hat_powered)
             pin_config.Pin = chip_selects[i].pin;
             HAL_GPIO_Init(chip_selects[i].port, &pin_config);
         }
+        pin_config.Mode      = GPIO_MODE_AF_PP;
+        pin_config.Alternate = SPI4_AF;
     } else {
         // Analog is the STM32's true high impedance: no output, no input buffer.
         pin_config.Mode = GPIO_MODE_ANALOG;
@@ -94,8 +96,6 @@ void spi4_bus_power(bool hat_powered)
         }
     }
     //configure bus pins
-    pin_config.Mode      = GPIO_MODE_AF_PP;
-    pin_config.Alternate = SPI4_AF;
     for (unsigned i = 0; i < sizeof bus_pins / sizeof bus_pins[0]; i++) {
         pin_config.Pin = bus_pins[i].pin;
         HAL_GPIO_Init(bus_pins[i].port, &pin_config);

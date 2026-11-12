@@ -53,6 +53,14 @@ void log_write(const char *text, size_t length)
     }
 }
 
+void log_write_wait(const void *data, size_t length)
+{
+    log_message_t message;
+    message.length = (uint16_t)length;
+    memcpy(message.text, data, length);
+    xQueueSend(log_queue, &message, portMAX_DELAY);
+}
+
 void vLogTask(void *pvParameters)
 {
     (void)pvParameters;

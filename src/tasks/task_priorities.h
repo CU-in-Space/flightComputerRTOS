@@ -17,6 +17,7 @@
 #define PRIORITY_SAFETY        (tskIDLE_PRIORITY + 5)
 #define PRIORITY_ACTUATORS     (tskIDLE_PRIORITY + 4)
 #define PRIORITY_SENSORS       (tskIDLE_PRIORITY + 3)
+#define PRIORITY_RADIO         (tskIDLE_PRIORITY + 2)
 #define PRIORITY_STORAGE       (tskIDLE_PRIORITY + 2)
 #define PRIORITY_CONSOLE       (tskIDLE_PRIORITY + 2)
 #define PRIORITY_LOG           (tskIDLE_PRIORITY + 1)

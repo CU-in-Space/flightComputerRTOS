@@ -11,15 +11,22 @@
 #include "task.h"
 
 #include "usart.h"
+#include "app/radio_link.h"
 #include "app/command.h"
+#include "app/crc32.h"
+#include "app/flash_log.h"
+#include "app/stand.h"
 #include "tasks/actuator_task.h"
 #include "tasks/datalog_task.h"
 #include "drivers/max31856.h"
+#include "drivers/e22.h"
 #include "drivers/pt_adc.h"
+#include "drivers/w25q128.h"
 #include "tasks/interlock_task.h"
 #include "tasks/lc_task.h"
 #include "tasks/log_task.h"
 #include "tasks/pt_task.h"
+#include "tasks/radio_task.h"
 #include "tasks/tc_task.h"
 
 #define RX_BUFFER_SIZE  64U
@@ -27,6 +34,7 @@
 #define ARGS_MAX        8     // most words in one command
 #define SEND_TIMEOUT_MS 100U
 #define STREAM_PERIOD_MS 100U
+#define FLASH_RUNS_LISTED 16U // the newest ones
 
 typedef struct {
     const char *name;
@@ -34,9 +42,14 @@ typedef struct {
     void (*run)(int argc, char *argv[]);
 } console_command_t;
 
+static bool at_serial_console(const char *command);
+static void print_table_error(void);
 static void cmd_help(int argc, char *argv[]);
 static void cmd_status(int argc, char *argv[]);
+static void cmd_radio(int argc, char *argv[]);
+static void cmd_stand(int argc, char *argv[]);
 static void cmd_off(int argc, char *argv[]);
+static void cmd_safe(int argc, char *argv[]);
 static void cmd_sol(int argc, char *argv[]);
 static void cmd_srv(int argc, char *argv[]);
 static void cmd_stp(int argc, char *argv[]);
@@ -44,23 +57,29 @@ static void cmd_pt(int argc, char *argv[]);
 static void cmd_tc(int argc, char *argv[]);
 static void cmd_lc(int argc, char *argv[]);
 static void cmd_log(int argc, char *argv[]);
+static void cmd_flash(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
     { "help",   "list commands",                               cmd_help   },
     { "status", "interlock, VBAT and every actuator",           cmd_status },
+    { "radio",  "[send]: the link; send transmits one packet",  cmd_radio  },
     { "off",    "every actuator off",                           cmd_off    },
-    { "sol",    "<1-4> <on|off>: switch a solenoid",            cmd_sol    },
-    { "srv",    "<1-4> <us|off>: set a servo's pulse",          cmd_srv    },
+    { "safe",   "every actuator to its safe state",             cmd_safe   },
+    { "sol",    "<1-4 or name> <on|off>: switch a solenoid",    cmd_sol    },
+    { "srv",    "<1-4 or name> <us|off>: set a servo's pulse",  cmd_srv    },
     { "stp",    "home | zero | stop | go <step> | jog <steps>", cmd_stp    },
     { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
     { "tc",     "[stream]: thermocouples",                      cmd_tc     },
-    { "lc",     "[stream | tare | cal <N>]: load cell",         cmd_lc     },
-    { "log",    "[start | stop]: record to the SD card",        cmd_log    },
+    { "lc",     "[stream | tare <cell> | cal <cell> <N>]: load cells 1 and 2", cmd_lc },
+    { "log",    "[start | stop]: record to SD and flash",       cmd_log    },
+    { "flash",  "[dump [run]]: flash runs; dump is for tools/flash_dump.py", cmd_flash },
+    { "stand",  "[1|2]: which stand this is, and what is wired to it", cmd_stand },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
 static StreamBufferHandle_t rx_buffer;
+static TaskHandle_t console_task_handle;
 
 void console_init(void)
 {
@@ -89,15 +108,23 @@ void USART3_IRQHandler(void)
     portYIELD_FROM_ISR(woken);
 }
 
-// Splits the line into words and runs the matching command.
-static void run_line(char *line)
+// Splits the line into words and runs the matching command. Two tasks call it,
+// so a command keeps what it's working on in local variables.
+void console_run_line(char *line)
 {
     char *argv[ARGS_MAX];
     int argc = 0;
     char *rest;   // where strtok_r picks up next time
 
-    for (char *word = strtok_r(line, " ", &rest); word != NULL && argc < ARGS_MAX;
-         word = strtok_r(NULL, " ", &rest)) {
+    // Into the data log as it came, before it's cut up.
+    size_t length = strlen(line);
+    if (length > 0) {
+        datalog_write(RECORD_TEXT, line, length);
+    }
+
+    // A line sent over the radio may still end in the sender's CR or LF.
+    for (char *word = strtok_r(line, " \r\n", &rest); word != NULL && argc < ARGS_MAX;
+         word = strtok_r(NULL, " \r\n", &rest)) {
         argv[argc++] = word;
     }
     if (argc == 0) {
@@ -117,10 +144,12 @@ void vConsoleTask(void *pvParameters)
 {
     (void)pvParameters;
 
+    console_task_handle = xTaskGetCurrentTaskHandle();
     char line[LINE_MAX];
     size_t length = 0;
     char previous = 0;
 
+    print_table_error();
     printf("Type 'help' for commands.\r\n");
     log_write("> ", 2);
 
@@ -139,11 +168,7 @@ void vConsoleTask(void *pvParameters)
         if (key == '\r' || key == '\n') {
             log_write("\r\n", 2);
             line[length] = '\0';
-            // Into the data log as typed (run_line cuts it up).
-            if (length > 0) {
-                datalog_write(RECORD_TEXT, line, length);
-            }
-            run_line(line);
+            console_run_line(line);
             length = 0;
             log_write("> ", 2);
         } else if (key == '\b' || key == 0x7F) {
@@ -208,22 +233,123 @@ static void cmd_off(int argc, char *argv[])
     send_command(&command);
 }
 
+// The same thing the launch box's SAFE and a lost radio link do.
+static void cmd_safe(int argc, char *argv[])
+{
+    (void)argc;
+    (void)argv;
+    command_t command = { .type = COMMAND_SAFE };
+    send_command(&command);
+}
+
+static void cmd_radio(int argc, char *argv[])
+{
+    if (argc == 2 && strcmp(argv[1], "send") == 0) {
+        printf(radio_send_test() ? "radio: sending one telemetry packet\r\n"
+                                 : "radio: not running\r\n");
+        return;
+    }
+    if (argc != 1) {
+        printf("usage: radio [send]\r\n");
+        return;
+    }
+
+    interlock_state_t interlock = interlock_current_state();
+    if (interlock != INTERLOCK_ENABLED) {
+        printf("radio: HAT has no power (interlock %s)\r\n", interlock_state_names[interlock]);
+        return;
+    }
+
+    radio_status_t status;
+    radio_status(&status);
+    if (!status.started) {
+        printf("radio: SX1262 not responding\r\n");
+        return;
+    }
+    printf("radio: stand %u, listening on %lu kHz, sending at %d dBm from the chip, link %s%s\r\n",
+           stand_number(), (unsigned long)(RADIO_FREQUENCY_HZ / 1000UL), E22_TX_POWER_DBM,
+           status.linked ? "up" : "down",
+           status.aborted ? ", went safe by itself: turn the launch box's key off to clear" : "");
+    printf("radio: %lu received (last %d dBm, SNR %d dB), %lu rejected, %lu sent, %lu restarts\r\n",
+           (unsigned long)status.received, status.rssi_dbm, status.snr_db,
+           (unsigned long)status.rejected, (unsigned long)status.sent,
+           (unsigned long)status.restarts);
+}
+
+// One line of the "stand" listing: a channel's name, and for an output what it
+// drives and how.
+static void print_channel(channel_kind_t kind, unsigned index)
+{
+    const char *name = stand_name(kind, index);
+    printf("%s %u %s", stand_kind_text(kind), index + 1, name[0] != '\0' ? name : "-");
+
+    const output_t *row = NULL;
+    if (kind == KIND_SOL || kind == KIND_SRV) {
+        row = stand_output((kind == KIND_SOL ? 0 : SOLENOID_COUNT) + index);
+    }
+    if (row == NULL || row->drives == NOT_A_VALVE) {
+        printf("\r\n");
+    } else if (kind == KIND_SOL) {
+        printf(": %s, open is %s\r\n", stand_drives_text(row->drives), row->inverted ? "off" : "on");
+    } else {
+        printf(": %s, closed %u us, open %u us\r\n", stand_drives_text(row->drives), row->closed_us,
+               row->open_us);
+    }
+}
+
+// Says so if the table in app/stand_table.c has a mistake in it.
+static void print_table_error(void)
+{
+    char why[96];
+    if (!stand_check(stand_table, RADIO_STAND_MAX, why, sizeof why)) {
+        printf("stand table: %s\r\n", why);
+    }
+}
+
+// "stand" says which stand this is and lists what's wired to it: the names and
+// valves of its row in app/stand_table.c. "stand 2" changes the number, the one
+// thing a stand saves.
+static void cmd_stand(int argc, char *argv[])
+{
+    long stand;
+    if (argc == 2 && read_number(argv[1], &stand) && stand >= 1 && stand <= (long)RADIO_STAND_MAX) {
+        // Not over the radio: the launch box is talking to the old number.
+        if (!at_serial_console("stand")) {
+            return;
+        }
+        stand_select((uint8_t)stand);
+        if (!stand_save()) {
+            printf("stand: not saved to flash, kept until power off\r\n");
+        }
+    } else if (argc != 1) {
+        printf("usage: stand [1|2]\r\n");
+        return;
+    }
+
+    printf("stand %u\r\n", stand_number());
+    for (unsigned kind = 0; kind < KIND_COUNT; kind++) {
+        for (unsigned i = 0; i < stand_kind_count(kind); i++) {
+            print_channel(kind, i);
+        }
+    }
+    print_table_error();
+}
+
 static void cmd_sol(int argc, char *argv[])
 {
     if (argc != 3) {
-        printf("usage: sol <1-4> <on|off>\r\n");
+        printf("usage: sol <1-4 or name> <on|off>\r\n");
         return;
     }
 
-    long number;
+    int index = stand_index(KIND_SOL, argv[1]);
     bool on = strcmp(argv[2], "on") == 0;
-    if (!read_number(argv[1], &number) || number < 1 || number > SOLENOID_COUNT
-        || (!on && strcmp(argv[2], "off") != 0)) {
-        printf("usage: sol <1-4> <on|off>\r\n");
+    if (index < 0 || (!on && strcmp(argv[2], "off") != 0)) {
+        printf("usage: sol <1-4 or name> <on|off>\r\n");
         return;
     }
 
-    command_t command = { .type = COMMAND_SOLENOID, .channel = (uint8_t)(number - 1), .on = on };
+    command_t command = { .type = COMMAND_SOLENOID, .channel = (uint8_t)index, .on = on };
     send_command(&command);
 }
 
@@ -231,20 +357,20 @@ static void cmd_sol(int argc, char *argv[])
 static void cmd_srv(int argc, char *argv[])
 {
     if (argc != 3) {
-        printf("usage: srv <1-4> <us|off>\r\n");
+        printf("usage: srv <1-4 or name> <us|off>\r\n");
         return;
     }
 
-    long number;
+    int index = stand_index(KIND_SRV, argv[1]);
     long pulse_us = 0;   // "off"
     bool off = strcmp(argv[2], "off") == 0;
-    if (!read_number(argv[1], &number) || number < 1 || number > SERVO_COUNT
+    if (index < 0
         || (!off && (!read_number(argv[2], &pulse_us) || pulse_us < 1 || pulse_us > UINT16_MAX))) {
-        printf("usage: srv <1-4> <us|off>\r\n");
+        printf("usage: srv <1-4 or name> <us|off>\r\n");
         return;
     }
 
-    command_t command = { .type = COMMAND_SERVO, .channel = (uint8_t)(number - 1),
+    command_t command = { .type = COMMAND_SERVO, .channel = (uint8_t)index,
                           .pulse_us = (uint16_t)pulse_us };
     send_command(&command);
 }
@@ -293,9 +419,11 @@ static void print_pts(void)
 {
     for (unsigned i = 0; i < PT_COUNT; i++) {
         pt_reading_t reading;
+        char name[NAME_SIZE + 1];
         pt_latest(i, &reading);
+        stand_spaced_name(KIND_PT, i, name);
         if (!reading.powered) {
-            printf("pt%u no supply (%lu mV)\r\n", i + 1, (unsigned long)reading.supply_mv);
+            printf("pt%u%s no supply (%lu mV)\r\n", i + 1, name, (unsigned long)reading.supply_mv);
             continue;
         }
 
@@ -303,7 +431,7 @@ static void print_pts(void)
         char ratio[16];
         format_fixed(psi, sizeof psi, reading.psi, 1);
         format_fixed(ratio, sizeof ratio, reading.ratio, 4);
-        printf("pt%u %s psi  ratio %s  out %lu mV  supply %lu mV\r\n", i + 1, psi, ratio,
+        printf("pt%u%s %s psi  ratio %s  out %lu mV  supply %lu mV\r\n", i + 1, name, psi, ratio,
                (unsigned long)reading.data_mv, (unsigned long)reading.supply_mv);
     }
 }
@@ -317,9 +445,24 @@ static void drain_input(void)
     }
 }
 
+// True in the console task. A command that only a key at the serial port can end
+// uses it to refuse a line that came over the radio.
+static bool at_serial_console(const char *command)
+{
+    if (xTaskGetCurrentTaskHandle() == console_task_handle) {
+        return true;
+    }
+    printf("%s: at the serial console only\r\n", command);
+    return false;
+}
+
 // Calls print every 100 ms until a key comes in.
 static void stream(void (*print)(void))
 {
+    if (!at_serial_console("stream")) {
+        return;
+    }
+
     // The LF of the Enter that ran this command may still be on its way.
     drain_input();
     printf("press any key to stop\r\n");
@@ -351,10 +494,12 @@ static void print_tcs(void)
 
     for (unsigned i = 0; i < TC_COUNT; i++) {
         tc_reading_t reading;
+        char name[NAME_SIZE + 1];
         tc_latest(i, &reading);
+        stand_spaced_name(KIND_TC, i, name);
         // Not set up yet, not answering, or the last read failed.
         if (!reading.present) {
-            printf("tc%u no reading\r\n", i + 1);
+            printf("tc%u%s no reading\r\n", i + 1, name);
             continue;
         }
 
@@ -372,7 +517,7 @@ static void print_tcs(void)
                                          max31856_fault_names[bit]);
             }
         }
-        printf("tc%u %s C  cold junction %s C%s\r\n", i + 1, temp, cold_junction, faults);
+        printf("tc%u%s %s C  cold junction %s C%s\r\n", i + 1, name, temp, cold_junction, faults);
     }
 }
 
@@ -395,45 +540,55 @@ static void print_lc(void)
         return;
     }
 
-    lc_reading_t reading;
-    lc_latest(&reading);
-    if (!reading.present) {
-        printf("lc no reading\r\n");
-        return;
-    }
+    for (unsigned i = 0; i < LC_COUNT; i++) {
+        lc_reading_t reading;
+        char name[NAME_SIZE + 1];
+        lc_latest(i, &reading);
+        stand_spaced_name(KIND_LC, i, name);
+        if (!reading.present) {
+            printf("lc%u%s no reading\r\n", i + 1, name);
+            continue;
+        }
 
-    char mv_per_v[24];
-    format_fixed(mv_per_v, sizeof mv_per_v, reading.mv_per_v, 5);
-    if (!reading.calibrated) {
-        printf("lc %s mV/V  uncalibrated\r\n", mv_per_v);
-        return;
+        char mv_per_v[24];
+        format_fixed(mv_per_v, sizeof mv_per_v, reading.mv_per_v, 5);
+        if (!reading.calibrated) {
+            printf("lc%u%s %s mV/V  uncalibrated\r\n", i + 1, name, mv_per_v);
+            continue;
+        }
+        char newtons[16];
+        format_fixed(newtons, sizeof newtons, reading.newtons, 1);
+        printf("lc%u%s %s N  %s mV/V\r\n", i + 1, name, newtons, mv_per_v);
     }
-    char newtons[16];
-    format_fixed(newtons, sizeof newtons, reading.newtons, 1);
-    printf("lc %s N  %s mV/V\r\n", newtons, mv_per_v);
 }
 
-// "lc tare" with the cell unloaded, then "lc cal <N>" with a known load on it.
+// "lc tare 1" with cell 1 unloaded, then "lc cal 1 <N>" with a known load on it.
+// The cell is always given, by number or name, so "lc cal 2" can't be read as
+// "cell 1, 2 newtons".
 static void cmd_lc(int argc, char *argv[])
 {
+    static const char usage[] = "usage: lc [stream | tare <1-2 or name> | cal <1-2 or name> <N>]\r\n";
+    int cell = argc >= 3 ? stand_index(KIND_LC, argv[2]) : -1;
+
     if (argc == 1) {
         print_lc();
     } else if (argc == 2 && strcmp(argv[1], "stream") == 0) {
         stream(print_lc);
-    } else if (argc == 2 && strcmp(argv[1], "tare") == 0) {
+    } else if (argc == 3 && cell >= 0 && strcmp(argv[1], "tare") == 0) {
         printf("taring, keep the cell still for a second\r\n");
-        printf(lc_tare() ? "lc zeroed\r\n" : "lc tare failed: no reading\r\n");
-    } else if (argc == 3 && strcmp(argv[1], "cal") == 0) {
+        printf(lc_tare((unsigned)cell) ? "lc %d zeroed\r\n" : "lc %d tare failed: no reading\r\n", cell + 1);
+    } else if (argc == 4 && cell >= 0 && strcmp(argv[1], "cal") == 0) {
         char *end;
-        float newtons = strtof(argv[2], &end);
+        float newtons = strtof(argv[3], &end);
         if (*end != '\0' || newtons == 0.0f) {
-            printf("usage: lc cal <known load in N>\r\n");
+            printf(usage);
             return;
         }
         printf("calibrating, keep the load still for a second\r\n");
-        printf(lc_calibrate(newtons) ? "lc calibrated\r\n" : "lc cal failed: no reading\r\n");
+        printf(lc_calibrate((unsigned)cell, newtons) ? "lc %d calibrated\r\n" : "lc %d cal failed: no reading\r\n",
+               cell + 1);
     } else {
-        printf("usage: lc [stream | tare | cal <N>]\r\n");
+        printf(usage);
     }
 }
 
@@ -442,13 +597,19 @@ static void cmd_log(int argc, char *argv[])
     if (argc == 1) {
         datalog_status_t status;
         datalog_status(&status);
-        if (status.file_name[0] == '\0') {
+        if (status.file_name[0] == '\0' && status.flash_run == 0) {
             printf("log: not recording\r\n");
             return;
         }
-        printf("log: %s %s, %lu bytes, %lu records dropped\r\n",
-               status.recording ? "writing" : "stopped, last file", status.file_name,
-               (unsigned long)status.bytes_written, (unsigned long)status.dropped);
+        const char *state = status.recording ? "writing" : "stopped, last";
+        if (status.file_name[0] != '\0') {
+            printf("log: %s file %s, %lu bytes\r\n", state, status.file_name,
+                   (unsigned long)status.bytes_written);
+        }
+        if (status.flash_run != 0) {
+            printf("log: %s flash run %lu\r\n", state, (unsigned long)status.flash_run);
+        }
+        printf("log: %lu records dropped\r\n", (unsigned long)status.dropped);
     } else if (argc == 2 && strcmp(argv[1], "start") == 0) {
         datalog_start();
     } else if (argc == 2 && strcmp(argv[1], "stop") == 0) {
@@ -456,4 +617,96 @@ static void cmd_log(int argc, char *argv[])
     } else {
         printf("usage: log [start | stop]\r\n");
     }
+}
+
+// Sends a whole run for tools/flash_dump.py. Every frame goes through the debug
+// log's queue, so anything printed meanwhile lands between frames and the tool
+// skips it. At 115200 a 64 KB block takes about 6 s.
+static void flash_dump(const flash_log_run_t *run)
+{
+    _Static_assert(sizeof(flash_dump_frame_t) <= LOG_MESSAGE_MAX, "a frame must fit one message");
+    static flash_dump_frame_t frame = { .sync = { DUMP_SYNC_0, DUMP_SYNC_1 } };
+    const size_t checked = sizeof frame - sizeof frame.sync - sizeof frame.crc;
+    uint32_t total = run->blocks * FLASH_LOG_BLOCK_SIZE;
+
+    if (!at_serial_console("flash dump")) {
+        return;
+    }
+
+    // The LF of the Enter that ran this command may still be on its way.
+    drain_input();
+    printf("flash: sending run %lu, %lu blocks, any key stops\r\n",
+           (unsigned long)run->run, (unsigned long)run->blocks);
+
+    for (uint32_t offset = 0; offset < total; offset += frame.length) {
+        uint32_t in_block = offset % FLASH_LOG_BLOCK_SIZE;
+        uint32_t left = FLASH_LOG_BLOCK_SIZE - in_block;
+        frame.length = (uint8_t)(left < DUMP_DATA_SIZE ? left : DUMP_DATA_SIZE);
+        frame.offset = offset;
+        if (!w25q128_read(flash_log_block_address(run, offset / FLASH_LOG_BLOCK_SIZE) + in_block,
+                          frame.data, frame.length)) {
+            printf("flash: read failed\r\n");
+            return;
+        }
+        frame.crc = crc32(&frame.length, checked);
+        log_write_wait(&frame, sizeof frame);
+
+        char key;
+        if (xStreamBufferReceive(rx_buffer, &key, 1, 0) > 0) {
+            drain_input();
+            printf("flash: stopped\r\n");
+            return;
+        }
+    }
+
+    frame.length = 0;
+    frame.offset = total;
+    frame.crc = crc32(&frame.length, checked);
+    log_write_wait(&frame, sizeof frame);
+    printf("flash: done\r\n");
+}
+
+static void cmd_flash(int argc, char *argv[])
+{
+    bool dump = argc >= 2 && strcmp(argv[1], "dump") == 0;
+    if (argc > 3 || (argc >= 2 && !dump)) {
+        printf("usage: flash [dump [run]]\r\n");
+        return;
+    }
+
+    flash_log_run_t runs[FLASH_RUNS_LISTED];
+    unsigned count;
+    if (!flash_log_runs(runs, FLASH_RUNS_LISTED, &count)) {
+        printf("flash: not responding (the HAT needs power)\r\n");
+        return;
+    }
+    if (count == 0) {
+        printf("flash: no runs\r\n");
+        return;
+    }
+
+    if (!dump) {
+        for (unsigned i = 0; i < count; i++) {
+            printf("flash: run %lu, %lu KB%s\r\n", (unsigned long)runs[i].run,
+                   (unsigned long)(runs[i].blocks * FLASH_LOG_BLOCK_SIZE / 1024UL),
+                   runs[i].start_lost ? ", start overwritten" : "");
+        }
+        return;
+    }
+
+    datalog_status_t status;
+    datalog_status(&status);
+    if (status.recording) {
+        printf("flash: still recording, run 'log stop' first\r\n");
+        return;
+    }
+
+    unsigned long wanted = argc == 3 ? strtoul(argv[2], NULL, 10) : runs[0].run;
+    for (unsigned i = 0; i < count; i++) {
+        if (runs[i].run == wanted) {
+            flash_dump(&runs[i]);
+            return;
+        }
+    }
+    printf("flash: no run %lu\r\n", wanted);
 }

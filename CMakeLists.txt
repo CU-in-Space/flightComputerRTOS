@@ -75,6 +75,15 @@ target_include_directories(fatfs PUBLIC
 )
 
 # ---------------------------------------------------------------------------
+# Semtech's SX126x driver, for the radio. Only the LoRa/GFSK file: the LR-FHSS
+# and BPSK ones aren't used. The four bus functions it calls (sx126x_hal_write
+# etc.) are in src/drivers/e22.c.
+# ---------------------------------------------------------------------------
+add_library(sx126x STATIC ${CMAKE_SOURCE_DIR}/lib/sx126x_driver/src/sx126x.c)
+
+target_include_directories(sx126x PUBLIC ${CMAKE_SOURCE_DIR}/lib/sx126x_driver/src)
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 # Globbed recursively so files lifted out of CubeMX (stm32h7xx_hal_msp.c, peripheral inits)
@@ -90,7 +99,7 @@ add_executable(${PROJECT_NAME}
 # Strict warnings on our code only -- vendor code is noisier than we want to see.
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wshadow -Wdouble-promotion)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel fatfs)
+target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel fatfs sx126x)
 
 # Lets code in src/ subfolders include each other as "drivers/imu.h" etc.
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)

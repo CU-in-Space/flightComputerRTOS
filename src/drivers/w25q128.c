@@ -3,8 +3,10 @@
 #include <string.h>
 
 #include "FreeRTOS.h"
+#include "semphr.h"
 #include "task.h"
 
+#include "main.h"
 #include "drivers/spi4_bus.h"
 
 #define CMD_WRITE_ENABLE  0x06U
@@ -12,13 +14,17 @@
 #define CMD_READ_DATA     0x03U
 #define CMD_PAGE_PROGRAM  0x02U
 #define CMD_SECTOR_ERASE  0x20U
+#define CMD_BLOCK_ERASE   0xD8U
 #define CMD_JEDEC_ID      0x9FU
 
 #define STATUS_BUSY       0x01U
 
 // Datasheet maximums, rounded up.
 #define PROGRAM_TIMEOUT_MS  5U
-#define ERASE_TIMEOUT_MS    500U
+#define SECTOR_TIMEOUT_MS   500U
+#define BLOCK_TIMEOUT_MS    2500U
+
+static SemaphoreHandle_t chip_mutex;
 
 // Command byte, then the 24-bit address, most significant byte first.
 static void put_command(uint8_t *buffer, uint8_t command, uint32_t address)
@@ -57,20 +63,33 @@ static bool write_enable(void)
     return spi4_transfer(SPI4_FLASH, &command, 1, NULL, 0);
 }
 
-bool w25q128_init(void)
+void w25q128_init(void)
+{
+    chip_mutex = xSemaphoreCreateMutex();
+    if (chip_mutex == NULL) {
+        Error_Handler();
+    }
+}
+
+bool w25q128_present(void)
 {
     const uint8_t command = CMD_JEDEC_ID;
     uint8_t id[3];
+    xSemaphoreTake(chip_mutex, portMAX_DELAY);
+    bool ok = spi4_transfer(SPI4_FLASH, &command, 1, id, sizeof id);
+    xSemaphoreGive(chip_mutex);
     // Winbond (EF), then device ID 4018 for the W25Q128JV.
-    return spi4_transfer(SPI4_FLASH, &command, 1, id, sizeof id)
-           && id[0] == 0xEF && id[1] == 0x40 && id[2] == 0x18;
+    return ok && id[0] == 0xEF && id[1] == 0x40 && id[2] == 0x18;
 }
 
 bool w25q128_read(uint32_t address, uint8_t *data, uint16_t length)
 {
     uint8_t command[4];
     put_command(command, CMD_READ_DATA, address);
-    return spi4_transfer(SPI4_FLASH, command, sizeof command, data, length);
+    xSemaphoreTake(chip_mutex, portMAX_DELAY);
+    bool ok = spi4_transfer(SPI4_FLASH, command, sizeof command, data, length);
+    xSemaphoreGive(chip_mutex);
+    return ok;
 }
 
 bool w25q128_program_page(uint32_t address, const uint8_t *data, uint16_t length)
@@ -80,16 +99,32 @@ bool w25q128_program_page(uint32_t address, const uint8_t *data, uint16_t length
     put_command(buffer, CMD_PAGE_PROGRAM, address);
     memcpy(&buffer[4], data, length);
 
-    return write_enable()
-           && spi4_transfer(SPI4_FLASH, buffer, (uint16_t)(4 + length), NULL, 0)
-           && wait_until_ready(PROGRAM_TIMEOUT_MS);
+    xSemaphoreTake(chip_mutex, portMAX_DELAY);
+    bool ok = write_enable()
+              && spi4_transfer(SPI4_FLASH, buffer, (uint16_t)(4 + length), NULL, 0)
+              && wait_until_ready(PROGRAM_TIMEOUT_MS);
+    xSemaphoreGive(chip_mutex);
+    return ok;
+}
+
+static bool erase(uint8_t opcode, uint32_t address, uint32_t timeout_ms)
+{
+    uint8_t command[4];
+    put_command(command, opcode, address);
+    xSemaphoreTake(chip_mutex, portMAX_DELAY);
+    bool ok = write_enable()
+              && spi4_transfer(SPI4_FLASH, command, sizeof command, NULL, 0)
+              && wait_until_ready(timeout_ms);
+    xSemaphoreGive(chip_mutex);
+    return ok;
 }
 
 bool w25q128_erase_sector(uint32_t address)
 {
-    uint8_t command[4];
-    put_command(command, CMD_SECTOR_ERASE, address);
-    return write_enable()
-           && spi4_transfer(SPI4_FLASH, command, sizeof command, NULL, 0)
-           && wait_until_ready(ERASE_TIMEOUT_MS);
+    return erase(CMD_SECTOR_ERASE, address, SECTOR_TIMEOUT_MS);
+}
+
+bool w25q128_erase_block(uint32_t address)
+{
+    return erase(CMD_BLOCK_ERASE, address, BLOCK_TIMEOUT_MS);
 }

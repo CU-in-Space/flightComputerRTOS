@@ -10,6 +10,7 @@
 #include "drivers/ads1220.h"
 #include "drivers/sd_card.h"
 #include "drivers/spi4_bus.h"
+#include "drivers/e22.h"
 #include "drivers/vbat_adc.h"
 
 #define INTERLOCK_PERIOD_MS  10U
@@ -71,6 +72,7 @@ void vInterlockTask(void *pvParameters)
             spi4_bus_power(state == INTERLOCK_ENABLED);
             ads1220_power(state == INTERLOCK_ENABLED);
             sd_card_power(state == INTERLOCK_ENABLED);
+            e22_power(state == INTERLOCK_ENABLED);
         }
 
         // Publish for the other tasks.

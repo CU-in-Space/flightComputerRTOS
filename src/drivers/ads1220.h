@@ -4,10 +4,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// ADS1220 load-cell ADC, alone on SPI5 (mode 1, 3.75 MHz). Set up for cell A
-// (AIN0 - AIN1), gain 128, 1000 samples/s continuous, referenced to the bridge
-// excitation, so a reading is the bridge's output as a fraction of its supply.
-// DRDY falls on PF0 when each sample is ready.
+// ADS1220 load-cell ADC, alone on SPI5 (mode 1, 3.75 MHz). Gain 128, 1000
+// samples/s continuous, referenced to the bridge excitation, so a reading is the
+// bridge's output as a fraction of its supply. It has two inputs, cell A (AIN0 -
+// AIN1) and cell B (AIN2 - AIN3), and converts one at a time: cell A until told
+// otherwise. DRDY falls on PF0 when each sample is ready.
 
 #define ADS1220_FULL_SCALE  8388608   // 2^23: code at +VREF / gain
 
@@ -24,5 +25,10 @@ bool ads1220_start(void);
 
 // Reads the latest sample as a signed 24-bit code.
 bool ads1220_read(int32_t *code);
+
+// Points the chip at cell A (0) or cell B (1). It drops the conversion it was
+// doing and starts one on the new cell, so the next DRDY is the new cell's
+// first sample, and that sample is good: the chip's filter settles in one.
+bool ads1220_select(unsigned cell);
 
 #endif /* DRIVERS_ADS1220_H */

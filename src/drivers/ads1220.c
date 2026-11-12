@@ -16,13 +16,18 @@
 #define CMD_RDATA   0x10U
 #define CMD_RREG    0x23U   // read 4 registers from register 0
 #define CMD_WREG    0x43U   // write 4 registers from register 0
+#define CMD_WREG0   0x40U   // write register 0 only
+
+// Register 0, gain 128, for each cell.
+#define CELL_A      0x0EU   // AINP = AIN0, AINN = AIN1
+#define CELL_B      0x5EU   // AINP = AIN2, AINN = AIN3
 
 // Register 0: AINP = AIN0, AINN = AIN1 (cell A), gain 128.
 // Register 1: 1000 SPS, normal mode, continuous conversion.
 // Register 2: reference REFP0 - REFN0 (the excitation), no 50/60 Hz filter
 //             (it only works at 20 SPS), no current sources.
 // Register 3: defaults: IDACs off, DRDY on its own pin.
-static const uint8_t config[4] = { 0x0E, 0xC4, 0x40, 0x00 };
+static const uint8_t config[4] = { CELL_A, 0xC4, 0x40, 0x00 };
 
 static SPI_HandleTypeDef hspi5;
 static SemaphoreHandle_t bus_mutex;
@@ -180,4 +185,10 @@ bool ads1220_read(int32_t *code)
     *code = (int32_t)(((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16)
                       | ((uint32_t)data[2] << 8)) >> 8;
     return true;
+}
+
+bool ads1220_select(unsigned cell)
+{
+    const uint8_t command[2] = { CMD_WREG0, cell == 0 ? CELL_A : CELL_B };
+    return transfer(command, sizeof command, NULL, 0);
 }
