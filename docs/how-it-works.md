@@ -247,25 +247,25 @@ In [`src/main.c`](../src/main.c):
 | `crash_init()` | unlocks the RTC backup registers that hold the crash record | |
 | `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz**; picks the ADCs' clock | overwrites `SystemCoreClock` with `480000000` |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
-| `vbat_adc_init()` | sets up and calibrates ADC3 for the battery voltage | all hardware setup happens here, before any task runs |
+| `vbat_adc_init()` | sets up and calibrates ADC3, then starts it converting the battery voltage and the 3.3 V rail by itself, about 1000 times a second each | all hardware setup happens here, before any task runs |
 | `solenoid_pwm_init()` | starts TIM1's 20 kHz PWM at 0 %, then hands SOL1–4 to it | |
 | `servo_pwm_init()` | starts TIM4's 50 Hz servo PWM with no pulses, then hands SRV1–4 to it | |
 | `stepper_init()` | sets up TIM2 for STEP pulses (stopped) and the FAULT and limit-switch inputs; the DRV8825 stays asleep | |
 | `pt_adc_init()` | sets up ADC1 + ADC2 in dual mode, their DMA and TIM15, and calibrates both; nothing samples yet | |
 | `spi4_bus_init()` | sets up SPI4 and its mutex; the pins stay high impedance until the HAT has power | |
 | `ads1220_init()` | sets up SPI5 and its mutex for the load-cell ADC; pins also wait for HAT power | |
-| `sd_card_init()` | turns on SDMMC1's clock; the card itself starts on `log start` | |
+| `sd_card_init()` | turns on SDMMC1's clock; the card itself starts when the log does, 200 ms after the HAT gets power | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
 | `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
 | `actuator_init()`, `console_init()`, `datalog_init()` | create the actuator command queue; turn on the serial port's receive interrupt; create the data log's request semaphore | |
 | `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock. Also switches the HAT's SPI pins (SPI4, SPI5) with ENABLED (HAT powered) | highest application priority |
-| `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED | |
+| `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED; walks each servo to a new position from where its arm is (kept in RTC backup registers through a reset) instead of jumping | |
 | `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
 | `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
 | `xTaskCreate(vLcTask, …)` | starts the load-cell ADC whenever the HAT gets power, reads all 1000 samples a second, publishes 10 ms averages | |
-| `xTaskCreate(vTcTask, …)` | sets the four thermocouple chips up whenever the HAT gets power, then reads them every 100 ms | |
+| `xTaskCreate(vTcTask, …)` | sets the four thermocouple chips up whenever the HAT gets power, then reads them every 100 ms; once a second sets up again any chip a power dip reset | |
 | `xTaskCreate(vPtTask, …)` | starts PT sampling (1 kHz) and turns each 10 ms block into a pressure per PT | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 

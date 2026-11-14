@@ -14,6 +14,10 @@
 #define W25Q128_BLOCK_SIZE   65536UL // largest erase below the whole chip
 #define W25Q128_PAGE_SIZE    256U    // largest program
 
+// What the HAT keeps in it: the load cells' tare and calibration in the first
+// sector (lc_task.c), the stand number in the second (app/stand.c). The rest is free.
+#define FLASH_SETTINGS_ADDRESS  0UL
+
 // Creates the mutex. Call before the scheduler starts.
 void w25q128_init(void);
 

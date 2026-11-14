@@ -22,13 +22,17 @@ bool max31856_configure(spi4_device_t device)
 {
     // The address auto-increments, so one write sets CR0 and then CR1.
     const uint8_t write[] = { REG_CR0 | WRITE_BIT, CR0_VALUE, CR1_VALUE };
-    const uint8_t read = REG_CR0;
-    uint8_t config[2];
-
 
     //write then read back to confirm it was taken and the presesnce of the chip
     return spi4_transfer(device, write, sizeof write, NULL, 0)
-           && spi4_transfer(device, &read, 1, config, sizeof config)
+           && max31856_configured(device);
+}
+
+bool max31856_configured(spi4_device_t device)
+{
+    const uint8_t read = REG_CR0;
+    uint8_t config[2];
+    return spi4_transfer(device, &read, 1, config, sizeof config)
            && config[0] == CR0_VALUE && config[1] == CR1_VALUE;
 }
 

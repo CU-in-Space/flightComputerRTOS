@@ -7,7 +7,8 @@
 #include <stdint.h>
 
 void crash_init(void);     // call right after HAL_Init()
-void crash_report(void);   // printf the reset reason and any saved crash, then clear it
+void crash_report(void);   // printf the boot count, reset reason, firmware version and any saved crash, then clear it
+const char *crash_boot_text(void);   // that same line, for the data log
 
 // Each saves a record and resets.
 __attribute__((noreturn)) void crash_fault(const uint32_t *stack_frame);   // fault handlers

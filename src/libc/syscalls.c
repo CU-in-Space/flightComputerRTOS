@@ -46,7 +46,7 @@ void *_sbrk(ptrdiff_t increment)
 int _write(int file, char *ptr, int len)
 {
     (void)file;
-    log_write(ptr, (size_t)len);
+    log_print(ptr, (size_t)len);
     return len;
 }
 

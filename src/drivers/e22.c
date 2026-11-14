@@ -347,16 +347,24 @@ bool e22_read_packet(uint8_t *data, uint8_t size, uint8_t *length,
                      int8_t *rssi_dbm, int8_t *snr_db)
 {
     sx126x_rx_buffer_status_t buffer;   // the packet's length, and where it starts in the chip's buffer
-    sx126x_pkt_status_lora_t signal;
 
     if (!ok(sx126x_get_rx_buffer_status(NULL, &buffer))
         || buffer.pld_len_in_bytes == 0 || buffer.pld_len_in_bytes > size
         || !ok(sx126x_read_buffer(NULL, buffer.buffer_start_pointer, data, buffer.pld_len_in_bytes))
-        || !ok(sx126x_get_lora_pkt_status(NULL, &signal))) {
+        || !e22_signal(rssi_dbm, snr_db)) {
         return false;
     }
 
     *length = buffer.pld_len_in_bytes;
+    return true;
+}
+
+bool e22_signal(int8_t *rssi_dbm, int8_t *snr_db)
+{
+    sx126x_pkt_status_lora_t signal;
+    if (!ok(sx126x_get_lora_pkt_status(NULL, &signal))) {
+        return false;
+    }
     *rssi_dbm = signal.rssi_pkt_in_dbm;
     *snr_db = signal.snr_pkt_in_db;
     return true;

@@ -9,7 +9,6 @@
 
 #include "main.h"
 #include "app/crc32.h"
-#include "app/flash_log.h"
 #include "board/board_pins.h"
 #include "drivers/ads1220.h"
 #include "drivers/w25q128.h"
@@ -24,6 +23,7 @@
 
 static TaskHandle_t lc_task_handle;
 static lc_reading_t latest[LC_COUNT];
+static volatile uint32_t misses;   // samples that didn't come or didn't read while started
 
 // Tare and calibration. Loaded from flash when the HAT gets power, saved after
 // each change. Written by the console task, read by this one, so copied in
@@ -126,6 +126,9 @@ void vLcTask(void *pvParameters)
        
         int32_t code;
         if (!sample_ready || !started || !ads1220_read(&code)) {
+            if (started) {
+                misses++;
+            }
             taskENTER_CRITICAL();
             latest[0].present = false;
             latest[1].present = false;
@@ -249,4 +252,9 @@ bool lc_calibrate(unsigned cell, float newtons)
     taskEXIT_CRITICAL();
     calibration_changed(cell);
     return true;
+}
+
+uint32_t lc_misses(void)
+{
+    return misses;
 }

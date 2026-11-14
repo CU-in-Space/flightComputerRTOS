@@ -1,6 +1,7 @@
 #include "tasks/tc_task.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -14,8 +15,46 @@
 // The first conversion after setup takes up to 185 ms. Until then the
 // temperature registers still read 0.
 #define FIRST_CONVERSION_MS  200U
+// How often each chip's setup is read back. A dip in the HAT's supply can reset
+// a chip without resetting the STM32, and a reset chip stops converting.
+#define SETUP_CHECK_MS  1000U
 
 static tc_reading_t latest[TC_COUNT];
+static volatile uint32_t setups_again;
+
+// To the console and the data log.
+static void note(const char *text)
+{
+    printf("%s\r\n", text);
+    datalog_write(RECORD_TEXT, text, strlen(text));
+}
+
+// Sets up again every chip that has lost its setup. True if any was.
+static bool check_setup(bool present[TC_COUNT])
+{
+    bool set_up_again = false;
+    for (unsigned i = 0; i < TC_COUNT; i++) {
+        spi4_device_t device = (spi4_device_t)(SPI4_TC1 + i);
+        char text[40];
+
+        bool ok = max31856_configured(device);
+        if (!ok) {
+            ok = max31856_configure(device);
+            if (ok) {
+                snprintf(text, sizeof text, "tc%u lost its setup: set up again", i + 1);
+                note(text);
+                set_up_again = true;
+                setups_again++;
+            }
+        }
+        if (!ok && present[i]) {
+            snprintf(text, sizeof text, "tc%u not responding", i + 1);
+            note(text);
+        }
+        present[i] = ok;
+    }
+    return set_up_again;
+}
 
 void vTcTask(void *pvParameters)
 {
@@ -23,6 +62,7 @@ void vTcTask(void *pvParameters)
 
     bool hat_powered = false;
     bool present[TC_COUNT] = {0};
+    unsigned reads_since_check = 0;
     TickType_t last_wake = xTaskGetTickCount();
 
     for (;;) {
@@ -38,6 +78,14 @@ void vTcTask(void *pvParameters)
                 }
             }
             if (hat_powered) {
+                vTaskDelay(pdMS_TO_TICKS(FIRST_CONVERSION_MS));
+            }
+            reads_since_check = 0;
+        }
+
+        if (hat_powered && ++reads_since_check >= SETUP_CHECK_MS / TC_PERIOD_MS) {
+            reads_since_check = 0;
+            if (check_setup(present)) {
                 vTaskDelay(pdMS_TO_TICKS(FIRST_CONVERSION_MS));
             }
         }
@@ -72,4 +120,9 @@ void tc_latest(unsigned tc, tc_reading_t *reading)
     taskENTER_CRITICAL();
     *reading = latest[tc];
     taskEXIT_CRITICAL();
+}
+
+uint32_t tc_setups_again(void)
+{
+    return setups_again;
 }

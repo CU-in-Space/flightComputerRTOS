@@ -25,9 +25,9 @@
 const stand_t stand_table[RADIO_STAND_MAX] = {
     // ---- Stand 1
     {
-        .pt = { "", "" },           // PT1, PT2
-        .tc = { "", "", "", "" },   // TC1-4
-        .lc = { "", "" },           // LC1 (connector A, fast), LC2 (connector B, a slow weight)
+        .pt = { "tank", "chamber" },           // PT1, PT2
+        .tc = { "tank_top", "tank_bottom", "chamber", "preburner" },   // TC1-4
+        .lc = { "rocket", "supply" },           // LC1 (connector A, fast), LC2 (connector B, a slow weight)
         .sol = {
             { .name = "" },   // SOL1
             { .name = "" },   // SOL2
@@ -35,10 +35,10 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
             { .name = "" },   // SOL4
         },
         .srv = {
-            { .name = "" },   // SRV1
-            { .name = "" },   // SRV2
+            { .name = "tank", .drives=VALVE_TANK, .open_us = 1000, .closed_us = 1400 },   // SRV1
+            { .name = "vent", .drives=VALVE_VENT},   // SRV2
             { .name = "" },   // SRV3
-            { .name = "" },   // SRV4
+            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1000, .closed_us = 2000},   // SRV4
         },
     },
     // ---- Stand 2
@@ -48,14 +48,14 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
         .lc = { "", "" },
         .sol = {
             { .name = "" },   // SOL1
-            { .name = "" },   // SOL2
+            { .name = "supply", .drives = VALVE_SUPPLY },   // SOL2
             { .name = "" },   // SOL3
             { .name = "" },   // SOL4
         },
         .srv = {
-            { .name = "" },   // SRV1
-            { .name = "" },   // SRV2
-            { .name = "" },   // SRV3
+            { .name = "line_vent", .drives= VALVE_LINE_VENT },   // SRV1
+            { .name = "detach", .drives= VALVE_DETACH },   // SRV2
+            { .name = "dump", .drives = VALVE_DUMP },   // SRV3
             { .name = "" },   // SRV4
         },
     },

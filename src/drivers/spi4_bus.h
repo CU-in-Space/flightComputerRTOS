@@ -30,4 +30,8 @@ void spi4_bus_power(bool hat_powered);
 bool spi4_transfer(spi4_device_t device, const uint8_t *tx, uint16_t tx_length,
                    uint8_t *rx, uint16_t rx_length);
 
+// Transfers the HAL failed or timed out on since the board started. A chip that
+// doesn't answer isn't one: SPI can't tell, it just reads zeros.
+uint32_t spi4_bus_errors(void);
+
 #endif /* DRIVERS_SPI4_BUS_H */

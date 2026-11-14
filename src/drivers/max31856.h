@@ -21,6 +21,10 @@ extern const char *const max31856_fault_names[8];
 // Writes the configuration and reads it back. False if the chip doesn't answer.
 bool max31856_configure(spi4_device_t device);
 
+// Reads the configuration back. False if the chip has lost it (a power dip resets
+// it, and it then stops converting) or doesn't answer.
+bool max31856_configured(spi4_device_t device);
+
 // Reads the latest temperatures and fault bits.
 bool max31856_read(spi4_device_t device, max31856_reading_t *reading);
 

@@ -177,7 +177,7 @@ so the command above is the same on every platform.
 
 Power board → Sensor HAT → Nucleo is one **stand**. There are two, numbered 1
 and 2, and one launch box. Each stand reads its sensors, drives its valves,
-logs to its SD card (with a backup in the HAT's flash chip), and follows the
+logs to its SD card, and follows the
 launch box's switches over the radio. There is no built-in sequence: the
 operator at the launch box runs the test by hand.
 
@@ -188,8 +188,8 @@ operator at the launch box runs the test by hand.
 | pt, tc, lc | 3 | pressures (1 kHz), thermocouples (10 Hz), load cells (one at about 1 kHz, one at 10 Hz) |
 | radio | 2 | the link to the launch box: makes the outputs that drive valves follow its switch positions, answers with telemetry, goes safe on SAFE or after 60 s without it |
 | remote | 2 | runs the command lines that arrive over the radio |
-| console | 2 | the same commands, typed at the ST-LINK serial port (115200 8N1) |
-| datalog | 2 | writes every sample to the SD card and the flash backup between `log start` (typed, or the launch box arming) and `log stop` |
+| console | 2 | the same commands, typed at the ST-LINK serial port (115200 8N1). Up and down bring back the last 16 lines typed there |
+| datalog | 2 | writes every sample to the SD card whenever the HAT has power, until `log stop`: a new file every hour, flushed every 200 ms, each starting with a boot line (boot count, reset reason, firmware, stand, any crash), a health record every second, and everything printed. A 32 GB card holds about three weeks |
 | log | 1 | `printf` output to the serial port |
 
 Commands, at the serial console or sent from the launch box:
@@ -198,17 +198,17 @@ Commands, at the serial console or sent from the launch box:
 |---|---|
 | `help` | list commands |
 | `status` | interlock, battery and every actuator |
-| `radio` | the link: packets received, rejected and sent, signal strength |
+| `radio` | the link: when the launch box was last heard and how strongly, its last STATE, packets received and sent, and the ones that weren't taken: damaged, on another protocol version, or not this link's |
 | `radio send` | transmit one telemetry packet, to test the transmitter |
+| `radio watch` | a line for every packet heard, until a key is pressed (serial console only) |
 | `off` | every actuator off |
 | `safe` | every actuator to its abort position: a valve goes where `RADIO_VALVE_ABORT` in `src/app/radio_link.h` says, everything else off |
-| `sol <1-4 or name> <on\|off>` | a solenoid |
-| `srv <1-4 or name> <us\|off>` | a servo's pulse width |
+| `sol <1-4 or name> <on\|off>` | a solenoid. Several asked on at once switch on 100 ms apart, SOL1 first, so their full-current peaks don't overlap; off is immediate |
+| `srv <1-4 or name> <us\|off>` | a servo's pulse width. Each servo walks there at 2000 µs a second from where its arm is: the last pulse sent (kept through `off` and resets), or after a power cycle its valve's safe position, so **turn the stand off safe** |
 | `stp home \| zero \| stop \| go <step> \| jog <steps>` | the stepper |
 | `pt`, `tc`, `lc` | one reading. Add `stream` for a running display (serial console only) |
 | `lc tare <1\|2>`, `lc cal <1\|2> <N>` | zero a load cell; calibrate it with a known load. The cell is its number or name. Both are kept in flash |
-| `log`, `log start`, `log stop` | the data log: SD card and flash backup, decoded by `tools/hat_log.py` |
-| `flash`, `flash dump [run]` | list the runs in the flash backup; send one to `tools/flash_dump.py` (serial console only) |
+| `log`, `log start`, `log stop` | the data log on the SD card, decoded by `tools/hat_log.py`. It starts by itself at power-up; `log stop` (before pulling the card) holds until `log start` or a reboot |
 | `stand`, `stand 2` | which stand this is, and what's wired to it: every name and valve. `stand 2` changes the number (serial console only) |
 
 **Names and valves** are one table for both stands,
@@ -236,12 +236,16 @@ there.
    ENABLED, `radio` shows `listening`.
 4. Launch box on, key off: each stand prints `radio: link up`. `safe` at each
    console and look at the valves: that's the abort.
-5. Nothing to type for the data log: each stand starts it when the launch
-   box arms (its key goes in). `log start` at a console starts it earlier.
+5. Nothing to type for the data log: each stand records from power-up. If
+   someone typed `log stop`, the launch box arming (its key going in) starts
+   it again, or `log start` at a console.
+   For a record on a laptop too, start `python3 tools/ground.py` with the
+   ground link plugged in; it records until you quit it.
 6. ARM plug in last, before leaving the stand. Run the test from the launch
    box. Its abort button is the abort; so is 60 s without the launch box.
-7. `log stop`, then `python3 tools/hat_log.py LOGnnnn.BIN --out <folder>`. If
-   the card failed, `tools/flash_dump.py` gets the same run out of the flash.
+7. `log stop` at each stand, or `stop` in `ground.py` for both. Then
+   `python3 tools/hat_log.py LOGnnnn.BIN --out <folder>`. `ground.py`'s
+   `runs.csv` says which LOG files each stand wrote while it ran.
 
 ---
 
@@ -271,7 +275,8 @@ cubemx/fc.ioc                   CubeMX source of truth for the above
 docs/radio-link.md              the radio link, for whoever programs the launch box
 lib/                            pinned vendor submodules
 tools/hat_log.py                decodes an SD-card log (LOGnnnn.BIN) into CSV files
-tools/flash_dump.py             copies a run out of the HAT's backup flash, for hat_log.py
+tools/ground.py                 the laptop's ground station: logs telemetry to CSV, sends commands
+tools/ground_link/              the ground station's radio: a Nano + RFM95 sketch
 ```
 
 Every `.c` file under `src/`, including subfolders, is compiled automatically,

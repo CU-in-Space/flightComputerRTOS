@@ -14,6 +14,7 @@
 #include "task.h"
 
 #include "usart.h"
+#include "tasks/datalog_task.h"
 
 #define LOG_QUEUE_DEPTH  32U    // ~4 KB of heap, ~0.35 s of backlog
 
@@ -53,12 +54,17 @@ void log_write(const char *text, size_t length)
     }
 }
 
-void log_write_wait(const void *data, size_t length)
+void log_print(const char *text, size_t length)
 {
-    log_message_t message;
-    message.length = (uint16_t)length;
-    memcpy(message.text, data, length);
-    xQueueSend(log_queue, &message, portMAX_DELAY);
+    log_write(text, length);
+
+    // In pieces a record can hold. Dropped when the data log isn't recording.
+    while (length > 0) {
+        size_t piece = length < UINT8_MAX ? length : UINT8_MAX;
+        datalog_write(RECORD_CONSOLE, text, piece);
+        text += piece;
+        length -= piece;
+    }
 }
 
 void vLogTask(void *pvParameters)

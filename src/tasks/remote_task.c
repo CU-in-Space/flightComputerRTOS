@@ -52,6 +52,6 @@ void vRemoteTask(void *pvParameters)
         xQueueReceive(remote_queue, &line, portMAX_DELAY);
         // Shown on the serial port the way a typed command would be.
         printf("radio> %s\r\n", line.text);
-        console_run_line(line.text);
+        console_run_line(line.text, true);
     }
 }

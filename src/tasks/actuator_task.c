@@ -11,6 +11,7 @@
 #include "drivers/servo_pwm.h"
 #include "drivers/solenoid_pwm.h"
 #include "drivers/stepper.h"
+#include "drivers/vbat_adc.h"
 #include "tasks/datalog_task.h"
 #include "tasks/interlock_task.h"
 
@@ -24,11 +25,23 @@ _Static_assert(SOLENOID_COUNT == OUTPUT_COUNT / 2 && SOLENOID_COUNT + SERVO_COUN
 // and the coil cool.
 #define SOLENOID_PEAK_MS       100U
 #define SOLENOID_HOLD_PERCENT  60U
+// Several solenoids asked on at once (an abort, or one STATE opening several valves)
+// switch on one at a time, so no two 100 ms peaks overlap and sag VBAT together.
+#define SOLENOID_STAGGER_MS    SOLENOID_PEAK_MS
 
-// A servo starting a move draws close to its stall current. Several at once would
-// overload the power board's 5 A servo buck, so moves go out one at a time. 60 ms is
-// three whole 20 ms periods, because a new pulse only starts at a period boundary.
+// The DRV8825 resets itself, and loses its place, without a word when its supply
+// falls to about 8 V. The interlock only trips at 6.9 V, so this is checked here.
+#define STEPPER_UVLO_MV  8200U
+
+// A servo jumping to a new position draws close to its stall current. Several at once
+// would overload the power board's 5 A servo buck, so jumps go out one at a time. 60 ms
+// is three whole 20 ms periods, because a new pulse only starts at a period boundary.
 #define SERVO_STAGGER_MS  60U
+
+// Each servo's position is kept in RTC backup registers, after the crash record:
+// they survive a reset, so after a brownout a servo carries on from where its arm
+// stopped. A power cycle clears them.
+#define SERVO_SAVED_MAGIC  0x5352564FU   // "SRVO"
 
 // Full steps per second, with no ramp: keep them low enough that the motor starts
 // without stalling. 2000 steps is one turn of the gearbox output.
@@ -47,18 +60,21 @@ _Static_assert(SOLENOID_COUNT == OUTPUT_COUNT / 2 && SOLENOID_COUNT + SERVO_COUN
 #define STEPPER_HOLD_WHEN_IDLE  false
 
 typedef struct {
-    bool on;
+    bool wanted;            // commanded on
+    bool on;                // switched on: follows wanted, but waits its turn to start
     uint32_t on_since_ms;
 } solenoid_t;
 
 typedef struct {
-    uint16_t target_us;   // what was commanded; 0 = off
-    uint16_t output_us;   // what TIM4 is sending
+    uint16_t target_us;     // what was commanded; 0 = off
+    uint16_t output_us;     // what TIM4 is sending; 0 = no pulse
+    uint16_t position_us;   // the last pulse sent, kept while off; 0 = not known
 } servo_t;
 
 typedef struct {
     uint16_t min_us;
     uint16_t max_us;
+    uint16_t ramp_us_per_s;   // walk to a new position this fast; 0 = jump
 } servo_limits_t;
 
 // What the stepper is doing. Homing is two moves: to the switch, then off it.
@@ -70,16 +86,19 @@ typedef enum {
 } stepper_job_t;
 
 // Safe for any hobby servo. Widen a channel once its end stops are measured.
+// The ramp is how fast a servo walks to a new position from where its arm is: a jump
+// draws stall current, and the MOV on SRV4, straight off VBAT, browned the board out.
 static const servo_limits_t servo_limits[SERVO_COUNT] = {
-    { 1000, 2000 },
-    { 1000, 2000 },
-    { 1000, 2000 },
-    { 1000, 2000 },
+    { 1000, 2000, 2000 },
+    { 1000, 2000, 2000 },
+    { 1000, 2000, 2000 },
+    { 1000, 2000, 2000 },
 };
 
 QueueHandle_t actuator_queue;
 
 static solenoid_t solenoids[SOLENOID_COUNT];
+static uint32_t last_solenoid_on_ms;
 static servo_t servos[SERVO_COUNT];
 static uint32_t last_servo_move_ms;
 static unsigned next_servo;   // where the next search for a move starts
@@ -117,18 +136,59 @@ static void print_servo(unsigned i, uint16_t pulse_us)
     }
 }
 
-// A repeated "on" keeps the original start, so it doesn't peak again.
-static void set_solenoid(unsigned i, bool on, uint32_t now_ms)
+// Off goes out at once; on waits its turn in the loop. A repeated "on" changes
+// nothing, so it doesn't peak again.
+static void set_solenoid(unsigned i, bool on)
 {
-    if (on && !solenoids[i].on) {
-        solenoids[i].on_since_ms = now_ms;
+    solenoids[i].wanted = on;
+    if (!on) {
+        solenoids[i].on = false;
     }
-    solenoids[i].on = on;
 }
 
 static bool servo_in_limits(unsigned i, uint16_t pulse_us)
 {
     return pulse_us == 0 || (pulse_us >= servo_limits[i].min_us && pulse_us <= servo_limits[i].max_us);
+}
+
+// A servo with a ramp walks to its target from where its arm is. If that isn't
+// known it jumps.
+static bool servo_ramps(unsigned i)
+{
+    return servo_limits[i].ramp_us_per_s != 0 && servos[i].position_us != 0 && servos[i].target_us != 0;
+}
+
+// Where a servo's arm is taken to be when nothing has been sent to it since power-up:
+// its valve's safe position, since the stand is turned off safe. 0 = no idea.
+static uint16_t assumed_position(unsigned i)
+{
+    unsigned output = SOLENOID_COUNT + i;
+    uint16_t drive = 0;
+    if (!stand_safe_drive(output, stand_output(output), &drive) || !servo_in_limits(i, drive)) {
+        return 0;
+    }
+    return drive;
+}
+
+static void save_positions(void)
+{
+    RTC->BKP14R = servos[0].position_us | (uint32_t)servos[1].position_us << 16;
+    RTC->BKP15R = servos[2].position_us | (uint32_t)servos[3].position_us << 16;
+    RTC->BKP16R = SERVO_SAVED_MAGIC;
+}
+
+// After a reset: where each servo was. After a power cycle the registers are clear
+// and every position stays unknown.
+static void load_positions(void)
+{
+    if (RTC->BKP16R != SERVO_SAVED_MAGIC) {
+        return;
+    }
+    const uint32_t saved[2] = { RTC->BKP14R, RTC->BKP15R };
+    for (unsigned i = 0; i < SERVO_COUNT; i++) {
+        uint16_t position = (uint16_t)(saved[i / 2] >> (16 * (i % 2)));
+        servos[i].position_us = servo_in_limits(i, position) ? position : 0;
+    }
 }
 
 // Wakes the driver if it's asleep and starts a move.
@@ -166,14 +226,14 @@ static bool stepper_can_move(interlock_state_t interlock)
     return true;
 }
 
-static void run_command(const command_t *command, interlock_state_t interlock, uint32_t now_ms)
+static void run_command(const command_t *command, interlock_state_t interlock)
 {
     switch (command->type) {
     case COMMAND_STATUS:
         printf("interlock %s, VBAT %lu mV\r\n", interlock_state_names[interlock],
                (unsigned long)interlock_current_vbat_mv());
         for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
-            print_solenoid(i, solenoids[i].on);
+            print_solenoid(i, solenoids[i].wanted);
         }
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             print_servo(i, servos[i].target_us);
@@ -185,7 +245,7 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
 
     case COMMAND_ALL_OFF:
         for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
-            solenoids[i].on = false;
+            set_solenoid(i, false);
         }
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             servos[i].target_us = 0;
@@ -208,7 +268,7 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
             }
 
             if (output < SOLENOID_COUNT) {
-                set_solenoid(output, drive != 0, now_ms);
+                set_solenoid(output, drive != 0);
             } else if (servo_in_limits(output - SOLENOID_COUNT, drive)) {
                 servos[output - SOLENOID_COUNT].target_us = drive;
             } else {
@@ -227,7 +287,7 @@ static void run_command(const command_t *command, interlock_state_t interlock, u
                    interlock_state_names[interlock]);
             break;
         }
-        set_solenoid(command->channel, command->on, now_ms);
+        set_solenoid(command->channel, command->on);
         print_solenoid(command->channel, command->on);
         break;
     }
@@ -315,6 +375,7 @@ void vActuatorTask(void *pvParameters)
 {
     (void)pvParameters;
 
+    load_positions();
     TickType_t last_wake = xTaskGetTickCount();
 
     for (;;) {
@@ -325,18 +386,33 @@ void vActuatorTask(void *pvParameters)
         // Run every command waiting in the queue. If there are none, move on.
         command_t command;
         while (xQueueReceive(actuator_queue, &command, 0) == pdPASS) {
-            run_command(&command, interlock, now_ms);
+            run_command(&command, interlock);
         }
 
-        // Enforce the interlock, then drive each solenoid's gate.
+        // Enforce the interlock. Leaving ENABLED switches everything off for good,
+        // so coming back never re-opens a valve by itself.
         for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
-            // Leaving ENABLED switches everything off for good, so coming back
-            // never re-opens a valve by itself.
-            if (interlock != INTERLOCK_ENABLED && solenoids[i].on) {
-                solenoids[i].on = false;
+            if (interlock != INTERLOCK_ENABLED && solenoids[i].wanted) {
+                set_solenoid(i, false);
                 printf("sol %u off: interlock %s\r\n", i + 1, interlock_state_names[interlock]);
             }
+        }
 
+        // One waiting solenoid switches on per SOLENOID_STAGGER_MS, lowest number
+        // first. Off is never held back.
+        if (now_ms - last_solenoid_on_ms >= SOLENOID_STAGGER_MS) {
+            for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
+                if (solenoids[i].wanted && !solenoids[i].on) {
+                    solenoids[i].on = true;
+                    solenoids[i].on_since_ms = now_ms;
+                    last_solenoid_on_ms = now_ms;
+                    break;
+                }
+            }
+        }
+
+        // Drive each solenoid's gate.
+        for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
             // Off: 0 %. On: 100 % for the peak, then the hold duty.
             uint32_t duty_percent = 0;
             if (solenoids[i].on) {
@@ -358,14 +434,35 @@ void vActuatorTask(void *pvParameters)
             }
         }
 
-        // One new position per SERVO_STAGGER_MS; a waiting servo keeps its old pulse.
-        // Round robin: the search starts after the servo that moved last, so every
-        // waiting servo gets a turn.
+        // A ramped servo takes one step per pass from where its arm is. The servo
+        // chases its pulse with its own position loop, so small steps never ask it
+        // for stall current, and its first pulse after off or a reset moves nothing.
+        for (unsigned i = 0; i < SERVO_COUNT; i++) {
+            if (servos[i].target_us != 0 && servos[i].position_us == 0) {
+                servos[i].position_us = assumed_position(i);
+            }
+            if (servo_ramps(i)) {
+                uint16_t step = servo_limits[i].ramp_us_per_s * ACTUATOR_PERIOD_MS / 1000U;
+                uint16_t from = servos[i].position_us;
+                uint16_t to = servos[i].target_us;
+                if (to > from) {
+                    servos[i].position_us = to - from > step ? from + step : to;
+                } else {
+                    servos[i].position_us = from - to > step ? from - step : to;
+                }
+                servos[i].output_us = servos[i].position_us;
+            }
+        }
+
+        // The rest jump, one new position per SERVO_STAGGER_MS; a waiting servo keeps
+        // its old pulse. Round robin: the search starts after the servo that moved
+        // last, so every waiting servo gets a turn.
         if (now_ms - last_servo_move_ms >= SERVO_STAGGER_MS) {
             for (unsigned n = 0; n < SERVO_COUNT; n++) {
                 unsigned i = (next_servo + n) % SERVO_COUNT;
-                if (servos[i].target_us != servos[i].output_us) {
+                if (!servo_ramps(i) && servos[i].target_us != servos[i].output_us) {
                     servos[i].output_us = servos[i].target_us;
+                    servos[i].position_us = servos[i].target_us;
                     last_servo_move_ms = now_ms;
                     next_servo = (i + 1) % SERVO_COUNT;
                     break;
@@ -376,6 +473,7 @@ void vActuatorTask(void *pvParameters)
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             servo_pwm_set(i, servos[i].output_us);
         }
+        save_positions();
 
         // Leaving ENABLED or a driver FAULT: sleep and forget home. The interlock
         // forgets home even when asleep, since a low battery can reset the driver.
@@ -414,17 +512,38 @@ void vActuatorTask(void *pvParameters)
         }
 
         // Every pass, so the log shows each output against the sensors.
+        // The rails' lows since the last pass: a dip shorter than 10 ms still shows.
+        uint32_t vbat_min_mv;
+        uint32_t vdda_min_mv;
+        vbat_adc_take_lows(&vbat_min_mv, &vdda_min_mv);
+
+        if (stepper_homed && vbat_min_mv < STEPPER_UVLO_MV) {
+            stepper_homed = false;
+            printf("stp: VBAT dipped to %lu mV, the driver may have reset: home it again\r\n",
+                   (unsigned long)vbat_min_mv);
+        }
+
         record_actuators_t record = {
             .interlock        = (uint8_t)interlock,
             .vbat_mv          = interlock_current_vbat_mv(),
             .stepper_position = stepper_position(),
             .stepper_awake    = stepper_awake,
+            .vbat_min_mv      = (uint16_t)vbat_min_mv,
+            .vdda_min_mv      = (uint16_t)vdda_min_mv,
         };
         for (unsigned i = 0; i < SOLENOID_COUNT; i++) {
             record.solenoids |= (uint8_t)(solenoids[i].on << i);
+            record.solenoids_wanted |= (uint8_t)(solenoids[i].wanted << i);
         }
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
             record.servo_us[i] = servos[i].output_us;
+            record.servo_target_us[i] = servos[i].target_us;
+        }
+        if (stepper_fault()) {
+            record.inputs |= RECORD_INPUT_STEPPER_FAULT;
+        }
+        if (stepper_at_limit()) {
+            record.inputs |= RECORD_INPUT_LIMIT_SWITCH;
         }
         datalog_write(RECORD_ACTUATORS, &record, sizeof record);
 

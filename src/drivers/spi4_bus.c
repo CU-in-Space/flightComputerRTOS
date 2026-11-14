@@ -11,6 +11,7 @@
 static SPI_HandleTypeDef hspi4;
 static SemaphoreHandle_t bus_mutex;
 static bool powered;   // only changed with the mutex held
+static volatile uint32_t errors;
 
 typedef struct {
     GPIO_TypeDef *port;
@@ -121,7 +122,15 @@ bool spi4_transfer(spi4_device_t device, const uint8_t *tx, uint16_t tx_length,
         ok = HAL_SPI_Receive(&hspi4, rx, rx_length, TIMEOUT_MS) == HAL_OK;
     }
     HAL_GPIO_WritePin(chip_selects[device].port, chip_selects[device].pin, GPIO_PIN_SET);
+    if (!ok) {
+        errors++;
+    }
 
     xSemaphoreGive(bus_mutex);
     return ok;
+}
+
+uint32_t spi4_bus_errors(void)
+{
+    return errors;
 }

@@ -45,6 +45,10 @@ bool e22_send(const uint8_t *data, uint8_t length);
 bool e22_read_packet(uint8_t *data, uint8_t size, uint8_t *length,
                      int8_t *rssi_dbm, int8_t *snr_db);
 
+// The signal strength and signal-to-noise ratio of the packet just received,
+// including one that failed its CRC.
+bool e22_signal(int8_t *rssi_dbm, int8_t *snr_db);
+
 // True if the chip answers and is in receive mode. False after it has reset
 // itself, for example on a supply dip.
 bool e22_listening(void);

@@ -13,15 +13,12 @@
 #include "usart.h"
 #include "app/radio_link.h"
 #include "app/command.h"
-#include "app/crc32.h"
-#include "app/flash_log.h"
 #include "app/stand.h"
 #include "tasks/actuator_task.h"
 #include "tasks/datalog_task.h"
 #include "drivers/max31856.h"
 #include "drivers/e22.h"
 #include "drivers/pt_adc.h"
-#include "drivers/w25q128.h"
 #include "tasks/interlock_task.h"
 #include "tasks/lc_task.h"
 #include "tasks/log_task.h"
@@ -32,9 +29,9 @@
 #define RX_BUFFER_SIZE  64U
 #define LINE_MAX        80U   // longest command line, including its arguments
 #define ARGS_MAX        8     // most words in one command
+#define HISTORY_SIZE    16U   // lines the up arrow can bring back
 #define SEND_TIMEOUT_MS 100U
 #define STREAM_PERIOD_MS 100U
-#define FLASH_RUNS_LISTED 16U // the newest ones
 
 typedef struct {
     const char *name;
@@ -43,6 +40,7 @@ typedef struct {
 } console_command_t;
 
 static bool at_serial_console(const char *command);
+static void drain_input(void);
 static void print_table_error(void);
 static void cmd_help(int argc, char *argv[]);
 static void cmd_status(int argc, char *argv[]);
@@ -57,13 +55,12 @@ static void cmd_pt(int argc, char *argv[]);
 static void cmd_tc(int argc, char *argv[]);
 static void cmd_lc(int argc, char *argv[]);
 static void cmd_log(int argc, char *argv[]);
-static void cmd_flash(int argc, char *argv[]);
 
 // To add a command: write its handler below, declare it above, add a row here.
 static const console_command_t commands[] = {
     { "help",   "list commands",                               cmd_help   },
     { "status", "interlock, VBAT and every actuator",           cmd_status },
-    { "radio",  "[send]: the link; send transmits one packet",  cmd_radio  },
+    { "radio",  "[send | watch]: the link; send transmits one packet, watch prints each one", cmd_radio },
     { "off",    "every actuator off",                           cmd_off    },
     { "safe",   "every actuator to its safe state",             cmd_safe   },
     { "sol",    "<1-4 or name> <on|off>: switch a solenoid",    cmd_sol    },
@@ -72,14 +69,26 @@ static const console_command_t commands[] = {
     { "pt",     "[stream]: pressures; stream runs until a key", cmd_pt     },
     { "tc",     "[stream]: thermocouples",                      cmd_tc     },
     { "lc",     "[stream | tare <cell> | cal <cell> <N>]: load cells 1 and 2", cmd_lc },
-    { "log",    "[start | stop]: record to SD and flash",       cmd_log    },
-    { "flash",  "[dump [run]]: flash runs; dump is for tools/flash_dump.py", cmd_flash },
+    { "log",    "[start | stop]: record to the SD card",       cmd_log    },
     { "stand",  "[1|2]: which stand this is, and what is wired to it", cmd_stand },
 };
 static const size_t command_count = sizeof commands / sizeof commands[0];
 
 static StreamBufferHandle_t rx_buffer;
 static TaskHandle_t console_task_handle;
+
+// Lines typed here, for the up and down arrows; radio lines aren't kept.
+// history[history_newest] is the last one run.
+static char history[HISTORY_SIZE][LINE_MAX];
+static unsigned history_count;
+static unsigned history_newest;
+
+// Where an arrow key's escape sequence (ESC [ A) has got to.
+typedef enum {
+    ESCAPE_NONE,
+    ESCAPE_STARTED,    // ESC
+    ESCAPE_SEQUENCE,   // ESC [, waiting for the final letter
+} escape_t;
 
 void console_init(void)
 {
@@ -110,16 +119,17 @@ void USART3_IRQHandler(void)
 
 // Splits the line into words and runs the matching command. Two tasks call it,
 // so a command keeps what it's working on in local variables.
-void console_run_line(char *line)
+void console_run_line(char *line, bool from_radio)
 {
     char *argv[ARGS_MAX];
     int argc = 0;
     char *rest;   // where strtok_r picks up next time
 
-    // Into the data log as it came, before it's cut up.
-    size_t length = strlen(line);
-    if (length > 0) {
-        datalog_write(RECORD_TEXT, line, length);
+    // Into the data log as it came, before it's cut up: "typed> sol 1 on".
+    if (line[0] != '\0') {
+        char text[UINT8_MAX];
+        snprintf(text, sizeof text, "%s> %s", from_radio ? "radio" : "typed", line);
+        datalog_write(RECORD_TEXT, text, strlen(text));
     }
 
     // A line sent over the radio may still end in the sender's CR or LF.
@@ -140,13 +150,45 @@ void console_run_line(char *line)
     printf("unknown command '%s', try 'help'\r\n", argv[0]);
 }
 
+// Keeps a line for the up arrow, unless it repeats the last one.
+static void history_add(const char *line)
+{
+    if (line[0] == '\0' || (history_count > 0 && strcmp(line, history[history_newest]) == 0)) {
+        return;
+    }
+    history_newest = (history_newest + 1) % HISTORY_SIZE;
+    strcpy(history[history_newest], line);
+    if (history_count < HISTORY_SIZE) {
+        history_count++;
+    }
+}
+
+// The line run `back` lines ago: 1 is the last one.
+static const char *history_line(unsigned back)
+{
+    return history[(history_newest + HISTORY_SIZE + 1 - back) % HISTORY_SIZE];
+}
+
+// Replaces what's typed after the prompt with text. Returns its length.
+static size_t show_line(char *line, const char *text)
+{
+    strcpy(line, text);
+    size_t length = strlen(line);
+    log_write("\r\x1b[K> ", 6);   // start of the line, clear it, prompt again
+    log_write(line, length);
+    return length;
+}
+
 void vConsoleTask(void *pvParameters)
 {
     (void)pvParameters;
 
     console_task_handle = xTaskGetCurrentTaskHandle();
     char line[LINE_MAX];
+    char draft[LINE_MAX];   // the new line, kept while the arrows show old ones
     size_t length = 0;
+    unsigned back = 0;      // 0: the new line; n: the line run n lines ago
+    escape_t escape = ESCAPE_NONE;
     char previous = 0;
 
     print_table_error();
@@ -156,6 +198,36 @@ void vConsoleTask(void *pvParameters)
     for (;;) {
         char key;
         xStreamBufferReceive(rx_buffer, &key, 1, portMAX_DELAY);
+
+        // Up is ESC [ A and down ESC [ B (ESC O A in some terminal modes). Other
+        // sequences, like left and right, are swallowed.
+        if (escape == ESCAPE_STARTED && (key == '[' || key == 'O')) {
+            escape = ESCAPE_SEQUENCE;
+            continue;
+        }
+        if (escape == ESCAPE_SEQUENCE) {
+            if (key >= '0' && key <= '?') {
+                continue;   // numbers before the letter, as in ctrl+up's ESC [ 1 ; 5 A
+            }
+            escape = ESCAPE_NONE;
+            if (key == 'A' && back < history_count) {
+                if (back == 0) {
+                    line[length] = '\0';
+                    strcpy(draft, line);
+                }
+                back++;
+                length = show_line(line, history_line(back));
+            } else if (key == 'B' && back > 0) {
+                back--;
+                length = show_line(line, back == 0 ? draft : history_line(back));
+            }
+            continue;
+        }
+        escape = ESCAPE_NONE;   // after a lone ESC the key counts as typed
+        if (key == 0x1B) {
+            escape = ESCAPE_STARTED;
+            continue;
+        }
 
         // Terminals send CR, LF or CR+LF for Enter. In a CR+LF the CR has
         // already run the line, so the LF is skipped.
@@ -168,8 +240,10 @@ void vConsoleTask(void *pvParameters)
         if (key == '\r' || key == '\n') {
             log_write("\r\n", 2);
             line[length] = '\0';
-            console_run_line(line);
+            history_add(line);
+            console_run_line(line, false);
             length = 0;
+            back = 0;
             log_write("> ", 2);
         } else if (key == '\b' || key == 0x7F) {
             // Backspace (macOS sends 0x7F): step back, blank the character, step back.
@@ -178,7 +252,7 @@ void vConsoleTask(void *pvParameters)
                 log_write("\b \b", 3);
             }
         } else if (key >= ' ' && key <= '~' && length < LINE_MAX - 1) {
-            // Printable characters are kept and echoed; arrow keys and the like are ignored.
+            // Printable characters are kept and echoed; other control keys are ignored.
             line[length++] = key;
             log_write(&key, 1);
         }
@@ -242,6 +316,28 @@ static void cmd_safe(int argc, char *argv[])
     send_command(&command);
 }
 
+// Prints a line for every packet the radio hears until a key comes in.
+static void watch_radio(void)
+{
+    if (!at_serial_console("radio watch")) {
+        return;
+    }
+    radio_status_t status;
+    radio_status(&status);
+    if (!status.started) {
+        printf("radio: not running\r\n");
+        return;
+    }
+
+    drain_input();
+    printf("radio: a line per packet, press any key to stop\r\n");
+    radio_watch(true);
+    char key;
+    xStreamBufferReceive(rx_buffer, &key, 1, portMAX_DELAY);
+    radio_watch(false);
+    drain_input();
+}
+
 static void cmd_radio(int argc, char *argv[])
 {
     if (argc == 2 && strcmp(argv[1], "send") == 0) {
@@ -249,8 +345,12 @@ static void cmd_radio(int argc, char *argv[])
                                  : "radio: not running\r\n");
         return;
     }
+    if (argc == 2 && strcmp(argv[1], "watch") == 0) {
+        watch_radio();
+        return;
+    }
     if (argc != 1) {
-        printf("usage: radio [send]\r\n");
+        printf("usage: radio [send | watch]\r\n");
         return;
     }
 
@@ -270,10 +370,25 @@ static void cmd_radio(int argc, char *argv[])
            stand_number(), (unsigned long)(RADIO_FREQUENCY_HZ / 1000UL), E22_TX_POWER_DBM,
            status.linked ? "up" : "down",
            status.aborted ? ", went safe by itself: turn the launch box's key off to clear" : "");
-    printf("radio: %lu received (last %d dBm, SNR %d dB), %lu rejected, %lu sent, %lu restarts\r\n",
-           (unsigned long)status.received, status.rssi_dbm, status.snr_db,
-           (unsigned long)status.rejected, (unsigned long)status.sent,
-           (unsigned long)status.restarts);
+
+    if (status.received == 0) {
+        printf("radio: nothing heard from the launch box yet\r\n");
+    } else {
+        uint32_t ago_ms = pdTICKS_TO_MS(xTaskGetTickCount()) - status.box_heard_ms;
+        printf("radio: launch box last heard %lu.%lu s ago, %d dBm, SNR %d dB\r\n",
+               (unsigned long)(ago_ms / 1000), (unsigned long)(ago_ms % 1000 / 100),
+               status.rssi_dbm, status.snr_db);
+    }
+    if (status.state_heard) {
+        char state[64];
+        radio_state_text(status.state_valves, status.state_flags, state, sizeof state);
+        printf("radio: its last STATE: %s\r\n", state);
+    }
+    printf("radio: %lu received, %lu sent, %lu restarts\r\n", (unsigned long)status.received,
+           (unsigned long)status.sent, (unsigned long)status.restarts);
+    printf("radio: %lu damaged, %lu on another protocol version, %lu not this link's\r\n",
+           (unsigned long)status.damaged, (unsigned long)status.other_version,
+           (unsigned long)status.rejected);
 }
 
 // One line of the "stand" listing: a channel's name, and for an output what it
@@ -597,18 +712,13 @@ static void cmd_log(int argc, char *argv[])
     if (argc == 1) {
         datalog_status_t status;
         datalog_status(&status);
-        if (status.file_name[0] == '\0' && status.flash_run == 0) {
+        if (status.file_name[0] == '\0') {
             printf("log: not recording\r\n");
             return;
         }
         const char *state = status.recording ? "writing" : "stopped, last";
-        if (status.file_name[0] != '\0') {
-            printf("log: %s file %s, %lu bytes\r\n", state, status.file_name,
-                   (unsigned long)status.bytes_written);
-        }
-        if (status.flash_run != 0) {
-            printf("log: %s flash run %lu\r\n", state, (unsigned long)status.flash_run);
-        }
+        printf("log: %s file %s, %lu bytes\r\n", state, status.file_name,
+               (unsigned long)status.bytes_written);
         printf("log: %lu records dropped\r\n", (unsigned long)status.dropped);
     } else if (argc == 2 && strcmp(argv[1], "start") == 0) {
         datalog_start();
@@ -617,96 +727,4 @@ static void cmd_log(int argc, char *argv[])
     } else {
         printf("usage: log [start | stop]\r\n");
     }
-}
-
-// Sends a whole run for tools/flash_dump.py. Every frame goes through the debug
-// log's queue, so anything printed meanwhile lands between frames and the tool
-// skips it. At 115200 a 64 KB block takes about 6 s.
-static void flash_dump(const flash_log_run_t *run)
-{
-    _Static_assert(sizeof(flash_dump_frame_t) <= LOG_MESSAGE_MAX, "a frame must fit one message");
-    static flash_dump_frame_t frame = { .sync = { DUMP_SYNC_0, DUMP_SYNC_1 } };
-    const size_t checked = sizeof frame - sizeof frame.sync - sizeof frame.crc;
-    uint32_t total = run->blocks * FLASH_LOG_BLOCK_SIZE;
-
-    if (!at_serial_console("flash dump")) {
-        return;
-    }
-
-    // The LF of the Enter that ran this command may still be on its way.
-    drain_input();
-    printf("flash: sending run %lu, %lu blocks, any key stops\r\n",
-           (unsigned long)run->run, (unsigned long)run->blocks);
-
-    for (uint32_t offset = 0; offset < total; offset += frame.length) {
-        uint32_t in_block = offset % FLASH_LOG_BLOCK_SIZE;
-        uint32_t left = FLASH_LOG_BLOCK_SIZE - in_block;
-        frame.length = (uint8_t)(left < DUMP_DATA_SIZE ? left : DUMP_DATA_SIZE);
-        frame.offset = offset;
-        if (!w25q128_read(flash_log_block_address(run, offset / FLASH_LOG_BLOCK_SIZE) + in_block,
-                          frame.data, frame.length)) {
-            printf("flash: read failed\r\n");
-            return;
-        }
-        frame.crc = crc32(&frame.length, checked);
-        log_write_wait(&frame, sizeof frame);
-
-        char key;
-        if (xStreamBufferReceive(rx_buffer, &key, 1, 0) > 0) {
-            drain_input();
-            printf("flash: stopped\r\n");
-            return;
-        }
-    }
-
-    frame.length = 0;
-    frame.offset = total;
-    frame.crc = crc32(&frame.length, checked);
-    log_write_wait(&frame, sizeof frame);
-    printf("flash: done\r\n");
-}
-
-static void cmd_flash(int argc, char *argv[])
-{
-    bool dump = argc >= 2 && strcmp(argv[1], "dump") == 0;
-    if (argc > 3 || (argc >= 2 && !dump)) {
-        printf("usage: flash [dump [run]]\r\n");
-        return;
-    }
-
-    flash_log_run_t runs[FLASH_RUNS_LISTED];
-    unsigned count;
-    if (!flash_log_runs(runs, FLASH_RUNS_LISTED, &count)) {
-        printf("flash: not responding (the HAT needs power)\r\n");
-        return;
-    }
-    if (count == 0) {
-        printf("flash: no runs\r\n");
-        return;
-    }
-
-    if (!dump) {
-        for (unsigned i = 0; i < count; i++) {
-            printf("flash: run %lu, %lu KB%s\r\n", (unsigned long)runs[i].run,
-                   (unsigned long)(runs[i].blocks * FLASH_LOG_BLOCK_SIZE / 1024UL),
-                   runs[i].start_lost ? ", start overwritten" : "");
-        }
-        return;
-    }
-
-    datalog_status_t status;
-    datalog_status(&status);
-    if (status.recording) {
-        printf("flash: still recording, run 'log stop' first\r\n");
-        return;
-    }
-
-    unsigned long wanted = argc == 3 ? strtoul(argv[2], NULL, 10) : runs[0].run;
-    for (unsigned i = 0; i < count; i++) {
-        if (runs[i].run == wanted) {
-            flash_dump(&runs[i]);
-            return;
-        }
-    }
-    printf("flash: no run %lu\r\n", wanted);
 }

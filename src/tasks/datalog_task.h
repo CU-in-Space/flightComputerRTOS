@@ -7,17 +7,17 @@
 
 #include "app/log_records.h"
 
-// Records sensor data to the SD card and, as a backup, the W25Q128. Between
-// datalog_start and datalog_stop, tasks hand records to datalog_write; this task
-// writes them to a new file, LOGnnnn.BIN, flushed once a second, and to a new
-// run in the flash ring (app/flash_log.h). Either one carries on if the other
-// fails. The format is app/log_records.h.
+// Records sensor data to the SD card. Recording starts by itself whenever the HAT
+// gets power, and runs until datalog_stop or the HAT loses power; datalog_start
+// starts it again after a stop. Meanwhile tasks hand records to datalog_write,
+// and this task writes them to LOGnnnn.BIN, flushed every 200 ms, a new file
+// every hour. Each file starts with the file start, the names and the boot line;
+// a health record goes in every second. The format is app/log_records.h.
 
 typedef struct {
     bool recording;
     char file_name[13];     // 8.3 name of the current or last file, "" if none
     uint32_t bytes_written; // into that file
-    uint32_t flash_run;     // current or last flash run, 0 if none
     uint32_t dropped;       // records that didn't fit in the buffer
 } datalog_status_t;
 

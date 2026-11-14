@@ -104,6 +104,16 @@ target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel fatfs sx
 # Lets code in src/ subfolders include each other as "drivers/imu.h" etc.
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+# fw_version.h, for the boot line: the git commit ("-dirty" with uncommitted
+# changes) and the build time. Written again at every build.
+add_custom_target(fw_version
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/generated/fw_version.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/fw_version.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/fw_version.h
+)
+add_dependencies(${PROJECT_NAME} fw_version)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/generated)
+
 target_link_options(${PROJECT_NAME} PRIVATE
     -T${LINKER_SCRIPT}
     --specs=nano.specs      # newlib-nano: much smaller printf/malloc

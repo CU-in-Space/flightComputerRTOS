@@ -5,8 +5,10 @@
 #include <string.h>
 
 #include "stm32h7xx_hal.h"
+#include "fw_version.h"
 
 #define CRASH_MAGIC  0x43525348U   // "CRSH"
+#define BOOT_MAGIC   0x424F4F54U   // "BOOT": BKP18R holds a boot count
 
 typedef enum {
     CRASH_FAULT = 1,
@@ -16,6 +18,8 @@ typedef enum {
 } crash_reason_t;
 
 // Laid over RTC->BKP0R..BKP13R. Word-sized fields only: the registers are 32-bit.
+// The actuator task keeps the servo positions in BKP14R..BKP16R, and the boot
+// count is in BKP17R..BKP18R.
 typedef struct {
     uint32_t magic;
     uint32_t reason;
@@ -31,6 +35,8 @@ typedef struct {
 } crash_record_t;
 
 static volatile crash_record_t *const record = (volatile crash_record_t *)&RTC->BKP0R;
+
+static char boot_text[224];   // why this boot happened, for the console and every log
 
 static const struct {
     uint32_t flag;
@@ -102,32 +108,47 @@ void crash_report(void)
             break;
         }
     }
-    printf("reset: %s\n", reset_reason);
     __HAL_RCC_CLEAR_RESET_FLAGS();
 
-    if (record->magic != CRASH_MAGIC) {
-        return;
-    }
-    record->magic = 0;
+    // A power cycle clears the count with the other backup registers, so 1 means
+    // they were cleared and anything more means they were kept.
+    uint32_t boots = RTC->BKP17R == BOOT_MAGIC ? RTC->BKP18R + 1 : 1;
+    RTC->BKP17R = BOOT_MAGIC;
+    RTC->BKP18R = boots;
 
-    switch (record->reason) {
-    case CRASH_FAULT:
-        printf("crash: fault pc=0x%08lx lr=0x%08lx cfsr=0x%08lx hfsr=0x%08lx bfar=0x%08lx mmfar=0x%08lx\n",
-               record->pc, record->lr, record->cfsr, record->hfsr, record->bfar, record->mmfar);
-        break;
-    case CRASH_ASSERT:
-        printf("crash: assert %s:%lu\n", (const char *)record->file, record->line);
-        break;
-    case CRASH_STACK_OVERFLOW: {
-        uint32_t name[4];
-        for (int word = 0; word < 4; word++) {
-            name[word] = record->task_name[word];
+    snprintf(boot_text, sizeof boot_text, "boot %lu since power-up, reset: %s, firmware %s",
+             (unsigned long)boots, reset_reason, FW_VERSION);
+    size_t used = strlen(boot_text);
+    char *rest = boot_text + used;
+    size_t room = sizeof boot_text - used;
+
+    if (record->magic == CRASH_MAGIC) {
+        record->magic = 0;
+        switch (record->reason) {
+        case CRASH_FAULT:
+            snprintf(rest, room, "; crash: fault pc=0x%08lx lr=0x%08lx cfsr=0x%08lx hfsr=0x%08lx bfar=0x%08lx mmfar=0x%08lx",
+                     record->pc, record->lr, record->cfsr, record->hfsr, record->bfar, record->mmfar);
+            break;
+        case CRASH_ASSERT:
+            snprintf(rest, room, "; crash: assert %s:%lu", (const char *)record->file, record->line);
+            break;
+        case CRASH_STACK_OVERFLOW: {
+            uint32_t name[4];
+            for (int word = 0; word < 4; word++) {
+                name[word] = record->task_name[word];
+            }
+            snprintf(rest, room, "; crash: stack overflow in %.16s", (const char *)name);
+            break;
         }
-        printf("crash: stack overflow in %s\n", (const char *)name);
-        break;
+        case CRASH_ERROR:
+            snprintf(rest, room, "; crash: error at 0x%08lx", record->pc);
+            break;
+        }
     }
-    case CRASH_ERROR:
-        printf("crash: error at 0x%08lx\n", record->pc);
-        break;
-    }
+    printf("%s\n", boot_text);
+}
+
+const char *crash_boot_text(void)
+{
+    return boot_text;
 }

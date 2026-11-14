@@ -7,7 +7,7 @@
  * and the packets. No other includes and nothing a C++ compiler objects to, so
  * the launch box sketch uses a copy of this file as it is. This one is the
  * master: change it here, then copy it to lunch-box/launch_box/ and
- * tools/lora_bench/.
+ * tools/ground_link/.
  * docs/radio-link.md explains it.
  *
  * The launch box talks first, always. A stand only ever transmits one telemetry
@@ -39,7 +39,9 @@ typedef struct __attribute__((packed)) {
     // TELEMETRY: the number of the last COMMAND or SAFE this stand took.
     // COMMAND and SAFE: that number plus one (255 wraps to 0). The launch box
     // repeats the packet, same number, until the stand's telemetry carries it
-    // back. Others: not used.
+    // back. STATE: the launch box counts every STATE it sends, wrapping, and
+    // stands log it to line up their logs (from launch box Rev 1.8). Others:
+    // not used.
     uint8_t sequence;
     uint8_t spare;      // 0
 } radio_address_t;
@@ -47,7 +49,7 @@ typedef struct __attribute__((packed)) {
 // ---- Packets. Little-endian, no padding. Each follows a radio_address_t.
 
 #define RADIO_NETWORK_ID        0x4355U   // "CU": anything else on the channel is dropped
-#define RADIO_PROTOCOL_VERSION  3U        // change it whenever a packet below changes
+#define RADIO_PROTOCOL_VERSION  5U        // change it whenever a packet below changes
 
 typedef enum {
     RADIO_POLL = 1,     // launch box: nothing to do, just answer
@@ -108,7 +110,7 @@ typedef struct __attribute__((packed)) {
 #define RADIO_VALID_LC2             (1U << 8)   // lc_code[1] is a reading
 #define RADIO_VALID_LC2_CALIBRATED  (1U << 9)   // lc_newtons[1] means something
 
-#define RADIO_FLAG_LOGGING         (1U << 0)   // the data log is recording, to the SD card, the flash or both
+#define RADIO_FLAG_LOGGING         (1U << 0)   // the data log is recording to the SD card
 // The stand lost the launch box for too long and went to the abort positions by
 // itself. It ignores STATE while this is set; a STATE without ARMED clears it.
 #define RADIO_FLAG_ABORTED         (1U << 1)
@@ -116,7 +118,7 @@ typedef struct __attribute__((packed)) {
 #define RADIO_NAME_SIZE      12U   // 11 characters and a 0
 #define RADIO_NAME_CHANNELS  16U   // 0-1 PT1-2, 2-5 TC1-4, 6-7 LC1-2, 8-11 SOL1-4, 12-15 SRV1-4
 
-// 83 bytes.
+// 85 bytes.
 typedef struct __attribute__((packed)) {
     radio_tag_t tag;
     uint32_t time_ms;       // stand time since boot
@@ -131,7 +133,9 @@ typedef struct __attribute__((packed)) {
     float lc_newtons[2];    // LC1 (the fast one), LC2 (the slow weight)
     int32_t lc_code[2];     // raw: LC1's 10 ms average, LC2's latest sample
     float tc_c[4];
-    uint32_t log_bytes;     // written to the current SD file; stays 0 if only the flash is recording
+    uint32_t log_bytes;     // written to the current SD file
+    // While recording, the SD file's number (7 for LOG0007.BIN), else 0.
+    uint16_t log_file;
     int8_t rssi_dbm;        // how the stand heard the packet this answers
     int8_t snr_db;
     // One channel's name per packet, each channel in turn, so a listener has

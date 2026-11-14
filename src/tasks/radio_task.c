@@ -1,6 +1,7 @@
 #include "tasks/radio_task.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -29,19 +30,24 @@
 #define LINK_TIMEOUT_MS  60000U  // this long without the launch box: link lost, go safe.
                                  // The launch box counts the same time down: its PAD_HOLD_MS
 #define SAFE_SEND_MS     50U     // the actuator task empties its queue every 10 ms
+#define RECORD_PERIOD_MS 1000U   // a RECORD_RADIO in the data log this often
 
 _Static_assert(PT_COUNT == 2 && TC_COUNT == 4 && LC_COUNT == 2,
                "radio_telemetry_t has room for 2 PTs, 4 TCs and 2 load cells");
 // The sizes docs/radio-link.md gives the launch box.
 _Static_assert(sizeof(radio_address_t) == 4 && sizeof(radio_tag_t) == 4 && sizeof(radio_state_t) == 6
-               && sizeof(radio_telemetry_t) == 83, "packets must have no padding");
+               && sizeof(radio_telemetry_t) == 85, "packets must have no padding");
 
-// What take_packet made of a packet.
+// What DIO1 rose for, and what take_packet made of a packet.
 typedef enum {
-    PACKET_REJECTED,   // not this link's, or malformed
-    PACKET_IGNORED,    // the other stand's telemetry
-    PACKET_HEARD,      // from the launch box, to the other stand
-    PACKET_ANSWER,     // from the launch box, to this stand
+    PACKET_NONE,           // not a packet: a transmission finishing late, say
+    PACKET_BAD_HEADER,     // damaged: its header failed
+    PACKET_BAD_CRC,        // damaged: failed its CRC
+    PACKET_OTHER_VERSION,  // this link's network, another protocol version
+    PACKET_REJECTED,       // not this link's, or malformed
+    PACKET_IGNORED,        // the other stand's telemetry
+    PACKET_HEARD,          // from the launch box, to the other stand
+    PACKET_ANSWER,         // from the launch box, to this stand
 } packet_result_t;
 
 // On air: the address, then the telemetry.
@@ -50,6 +56,14 @@ typedef struct __attribute__((packed)) {
     radio_telemetry_t telemetry;
 } telemetry_packet_t;
 
+// One packet as it arrived.
+typedef struct {
+    uint8_t data[sizeof(telemetry_packet_t)];   // the longest packet on the link
+    uint8_t length;
+    int8_t rssi_dbm;
+    int8_t snr_db;
+} heard_t;
+
 static TaskHandle_t radio_task_handle;
 static radio_status_t status;         // written by this task; copied in critical sections
 static uint8_t last_sequence;         // of the last COMMAND or SAFE taken
@@ -57,7 +71,9 @@ static uint8_t last_sequence;         // of the last COMMAND or SAFE taken
 static uint16_t state_sent[OUTPUT_COUNT];
 static bool box_armed;                // the last STATE had ARMED set
 static uint8_t next_name;             // the channel whose name goes in the next telemetry
+static bool state_changed;            // the STATE just taken asks for something new
 static volatile bool send_requested;  // "radio send" at the console
+static volatile bool watching;        // "radio watch" at the console
 
 // DIO1 rose: a packet has arrived or gone out.
 void EXTI3_IRQHandler(void)
@@ -167,6 +183,8 @@ static void fill_telemetry(radio_telemetry_t *telemetry)
     if (log.recording) {
         telemetry->flags |= RADIO_FLAG_LOGGING;
         telemetry->log_bytes = log.bytes_written;
+        // "LOG0007.BIN": the number starts after "LOG".
+        telemetry->log_file = (uint16_t)strtoul(&log.file_name[3], NULL, 10);
     }
 
     // One name per packet, each channel in turn.
@@ -185,6 +203,7 @@ static void send_telemetry(void)
     };
     fill_telemetry(&packet.telemetry);
 
+    bool sent = false;
     if (e22_send((const uint8_t *)&packet, sizeof packet)) {
         // Forget any DIO1 edge from before the transmission started. The next
         // one is this packet going out, about 30 ms from now.
@@ -192,11 +211,15 @@ static void send_telemetry(void)
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TX_WAIT_MS));
 
         sx126x_irq_mask_t events;
-        if (sx126x_get_and_clear_irq_status(NULL, &events) == SX126X_STATUS_OK && (events & SX126X_IRQ_TX_DONE)) {
-            status.sent++;
-        }
+        sent = sx126x_get_and_clear_irq_status(NULL, &events) == SX126X_STATUS_OK && (events & SX126X_IRQ_TX_DONE);
     }
     e22_receive();
+
+    if (sent) {
+        status.sent++;
+    } else if (watching) {
+        printf("radio: telemetry didn't go out\r\n");
+    }
 }
 
 // Makes the outputs that drive valves follow a STATE packet: the positions of
@@ -264,24 +287,22 @@ static void apply_state(const radio_state_t *state)
     }
 }
 
-// Reads the packet that just arrived and acts on it.
-static packet_result_t take_packet(void)
+// Acts on a packet that arrived whole.
+static packet_result_t take_packet(const heard_t *heard)
 {
-    uint8_t packet[sizeof(radio_address_t) + sizeof(radio_tag_t) + RADIO_COMMAND_MAX];
-    uint8_t length;
-    int8_t rssi_dbm;
-    int8_t snr_db;
     radio_address_t address;
     radio_tag_t tag;
 
-    if (!e22_read_packet(packet, sizeof packet, &length, &rssi_dbm, &snr_db)
-        || length < sizeof address + sizeof tag) {
+    if (heard->length < sizeof address + sizeof tag) {
         return PACKET_REJECTED;
     }
-    memcpy(&address, packet, sizeof address);
-    memcpy(&tag, &packet[sizeof address], sizeof tag);
-    if (tag.network != RADIO_NETWORK_ID || tag.version != RADIO_PROTOCOL_VERSION) {
+    memcpy(&address, heard->data, sizeof address);
+    memcpy(&tag, &heard->data[sizeof address], sizeof tag);
+    if (tag.network != RADIO_NETWORK_ID) {
         return PACKET_REJECTED;
+    }
+    if (tag.version != RADIO_PROTOCOL_VERSION) {
+        return PACKET_OTHER_VERSION;
     }
     if (address.from != RADIO_NODE_BOX) {
         return address.from <= RADIO_STAND_MAX && tag.type == RADIO_TELEMETRY ? PACKET_IGNORED
@@ -289,8 +310,8 @@ static packet_result_t take_packet(void)
     }
 
     bool mine = address.to == stand_number();
-    const uint8_t *text = &packet[sizeof address + sizeof tag];
-    size_t text_length = length - sizeof address - sizeof tag;
+    const uint8_t *text = &heard->data[sizeof address + sizeof tag];
+    size_t text_length = heard->length - sizeof address - sizeof tag;
 
     switch (tag.type) {
     case RADIO_POLL:
@@ -299,10 +320,17 @@ static packet_result_t take_packet(void)
     case RADIO_STATE: {
         // Acted on whoever it's addressed to: both stands follow every one.
         radio_state_t state;
-        if (length != sizeof address + sizeof state) {
+        if (heard->length != sizeof address + sizeof state) {
             return PACKET_REJECTED;
         }
-        memcpy(&state, &packet[sizeof address], sizeof state);
+        memcpy(&state, &heard->data[sizeof address], sizeof state);
+        state_changed = !status.state_heard || state.valves != status.state_valves
+                        || state.flags != status.state_flags;
+        status.state_heard = true;
+        status.state_valves = state.valves;
+        status.state_flags = state.flags;
+        status.state_count = address.sequence;
+        status.state_heard_ms = pdTICKS_TO_MS(xTaskGetTickCount());
         apply_state(&state);
         break;
     }
@@ -318,6 +346,9 @@ static packet_result_t take_packet(void)
         break;
 
     case RADIO_COMMAND:
+        if (text_length > RADIO_COMMAND_MAX) {
+            return PACKET_REJECTED;
+        }
         // A repeat of the one just taken is only answered again. If the remote
         // task has no room the command isn't taken; the launch box sees no
         // acknowledgement and sends it again.
@@ -330,10 +361,90 @@ static packet_result_t take_packet(void)
         return PACKET_REJECTED;
     }
 
-    status.received++;
-    status.rssi_dbm = rssi_dbm;
-    status.snr_db = snr_db;
     return mine ? PACKET_ANSWER : PACKET_HEARD;
+}
+
+// One line per packet, for "radio watch". Node 0 is the launch box, or a ground
+// link sending as it; 255 is everyone.
+static void print_packet(uint32_t now_ms, packet_result_t result, const heard_t *heard)
+{
+    static const char *const types[] = { "?", "POLL", "COMMAND", "SAFE", "TELEMETRY", "STATE" };
+    unsigned long s = now_ms / 1000, ms = now_ms % 1000;
+    radio_address_t address;
+    radio_tag_t tag;
+    memcpy(&address, heard->data, sizeof address);
+    memcpy(&tag, &heard->data[sizeof address], sizeof tag);
+
+    switch (result) {
+    case PACKET_BAD_HEADER:
+        printf("radio %lu.%03lu: damaged, its header failed\r\n", s, ms);
+        return;
+    case PACKET_BAD_CRC:
+        printf("radio %lu.%03lu: damaged, failed its CRC, %d dBm, SNR %d dB\r\n", s, ms,
+               heard->rssi_dbm, heard->snr_db);
+        return;
+    case PACKET_REJECTED:
+        printf("radio %lu.%03lu: not this link's, %u bytes, %d dBm\r\n", s, ms, heard->length, heard->rssi_dbm);
+        return;
+    case PACKET_OTHER_VERSION:
+        printf("radio %lu.%03lu: %u -> %u on protocol %u, this stand is on %u\r\n", s, ms,
+               address.from, address.to, tag.version, RADIO_PROTOCOL_VERSION);
+        return;
+    default:
+        break;
+    }
+
+    // What each kind carries, after a space.
+    char detail[80] = "";
+    size_t header_length = sizeof address + sizeof tag;
+    if (tag.type == RADIO_STATE) {
+        radio_state_t state;
+        memcpy(&state, &heard->data[sizeof address], sizeof state);
+        detail[0] = ' ';
+        radio_state_text(state.valves, state.flags, &detail[1], sizeof detail - 1);
+    } else if (tag.type == RADIO_COMMAND) {
+        snprintf(detail, sizeof detail, " #%u \"%.*s\"", address.sequence,
+                 (int)(heard->length - header_length), (const char *)&heard->data[header_length]);
+    } else if (tag.type == RADIO_SAFE) {
+        snprintf(detail, sizeof detail, " #%u", address.sequence);
+    }
+
+    printf("radio %lu.%03lu: %u -> %u %s%s, %d dBm, SNR %d dB%s\r\n", s, ms, address.from, address.to,
+           tag.type < sizeof types / sizeof types[0] ? types[tag.type] : "?", detail,
+           heard->rssi_dbm, heard->snr_db, result == PACKET_ANSWER ? ", answering" : "");
+}
+
+// The radio's counts and the last STATE, into the data log, which drops it
+// when it isn't recording.
+static void write_record(void)
+{
+    record_radio_t record = {
+        .received      = status.received,
+        .damaged       = status.damaged,
+        .other_version = status.other_version,
+        .rejected      = status.rejected,
+        .sent          = status.sent,
+        .restarts      = status.restarts,
+        .rssi_dbm      = status.rssi_dbm,
+        .snr_db        = status.snr_db,
+        .state_valves  = status.state_valves,
+        .state_flags   = status.state_flags,
+        .state_count   = status.state_count,
+        .state_heard_ms = status.state_heard_ms,
+    };
+    if (status.started) {
+        record.flags |= RECORD_RADIO_LISTENING;
+    }
+    if (status.linked) {
+        record.flags |= RECORD_RADIO_LINKED;
+    }
+    if (status.aborted) {
+        record.flags |= RECORD_RADIO_ABORTED;
+    }
+    if (status.state_heard) {
+        record.flags |= RECORD_RADIO_STATE_HEARD;
+    }
+    datalog_write(RECORD_RADIO, &record, sizeof record);
 }
 
 void vRadioTask(void *pvParameters)
@@ -342,13 +453,19 @@ void vRadioTask(void *pvParameters)
 
     radio_task_handle = xTaskGetCurrentTaskHandle();
     bool hat_powered = false;
-    uint32_t last_packet_ms = 0;
+    uint32_t record_ms = 0;
 
     for (;;) {
         // Woken by DIO1. The timeout is for everything that isn't a packet: the
-        // HAT's power, the chip's health, the link timer and "radio send".
+        // HAT's power, the chip's health, the link timer, "radio send" and the
+        // data log's record.
         bool dio1 = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(IDLE_MS)) > 0;
         uint32_t now_ms = pdTICKS_TO_MS(xTaskGetTickCount());
+
+        if (now_ms - record_ms >= RECORD_PERIOD_MS) {
+            record_ms = now_ms;
+            write_record();
+        }
 
         // The chip loses its setup without power, so start it each time. A link
         // that ends this way needs no "safe": the interlock has already switched
@@ -378,24 +495,53 @@ void vRadioTask(void *pvParameters)
             // What DIO1 rose for. Reading it clears it, so DIO1 can rise again.
             sx126x_irq_mask_t events = SX126X_IRQ_NONE;
             sx126x_get_and_clear_irq_status(NULL, &events);
-            packet_result_t result = PACKET_IGNORED;
-            if (events & (SX126X_IRQ_HEADER_ERROR | SX126X_IRQ_CRC_ERROR)) {
-                result = PACKET_REJECTED;
+            heard_t heard = { 0 };
+            packet_result_t result = PACKET_NONE;
+            if (events & SX126X_IRQ_HEADER_ERROR) {
+                result = PACKET_BAD_HEADER;
+            } else if (events & SX126X_IRQ_CRC_ERROR) {
+                result = PACKET_BAD_CRC;
+                e22_signal(&heard.rssi_dbm, &heard.snr_db);
             } else if (events & SX126X_IRQ_RX_DONE) {
-                result = take_packet();
+                result = e22_read_packet(heard.data, sizeof heard.data, &heard.length,
+                                         &heard.rssi_dbm, &heard.snr_db)
+                             ? take_packet(&heard) : PACKET_REJECTED;
             }
 
-            if (result == PACKET_REJECTED) {
+            switch (result) {
+            case PACKET_BAD_HEADER:
+            case PACKET_BAD_CRC:
+                status.damaged++;
+                break;
+            case PACKET_OTHER_VERSION:
+                status.other_version++;
+                break;
+            case PACKET_REJECTED:
                 status.rejected++;
-            }
-            // Any packet from the launch box keeps the link up, whichever stand
-            // it's for.
-            if (result == PACKET_HEARD || result == PACKET_ANSWER) {
-                last_packet_ms = now_ms;
+                break;
+            case PACKET_HEARD:
+            case PACKET_ANSWER:
+                // Any packet from the launch box keeps the link up, whichever
+                // stand it's for.
+                status.received++;
+                status.rssi_dbm = heard.rssi_dbm;
+                status.snr_db = heard.snr_db;
+                status.box_heard_ms = now_ms;
                 if (!status.linked) {
                     status.linked = true;
                     printf("radio: link up\r\n");
                 }
+                break;
+            default:
+                break;
+            }
+
+            if (watching && result != PACKET_NONE) {
+                print_packet(now_ms, result, &heard);
+            }
+            if (state_changed) {
+                state_changed = false;
+                write_record();
             }
             // One addressed to this stand gets one answer.
             if (result == PACKET_ANSWER) {
@@ -416,7 +562,7 @@ void vRadioTask(void *pvParameters)
             send_telemetry();
         }
 
-        if (status.linked && now_ms - last_packet_ms >= LINK_TIMEOUT_MS) {
+        if (status.linked && now_ms - status.box_heard_ms >= LINK_TIMEOUT_MS) {
             status.linked = false;
             status.aborted = true;
             go_safe("radio: link lost, going safe");
@@ -438,4 +584,29 @@ bool radio_send_test(void)
     }
     send_requested = true;
     return true;
+}
+
+void radio_watch(bool on)
+{
+    watching = on;
+}
+
+void radio_state_text(uint8_t valves, uint8_t flags, char *text, size_t size)
+{
+    static const char *const names[] = { "armed", "abort", "igniter 1", "igniter 2", "fire sequence" };
+    char bits[RADIO_VALVE_COUNT + 1];
+    for (unsigned v = 0; v < RADIO_VALVE_COUNT; v++) {
+        bits[v] = (valves >> v) & 1U ? '1' : '0';
+    }
+    bits[RADIO_VALVE_COUNT] = '\0';
+
+    size_t used = (size_t)snprintf(text, size, "valves %s", bits);
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if ((flags & (1U << i)) && used < size) {
+            used += (size_t)snprintf(&text[used], size - used, ", %s", names[i]);
+        }
+    }
+    if (!(flags & (RADIO_STATE_ARMED | RADIO_STATE_ABORT)) && used < size) {
+        snprintf(&text[used], size - used, ", key off");
+    }
 }

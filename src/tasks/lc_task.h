@@ -32,6 +32,10 @@ void vLcTask(void *pvParameters);
 // Copies a cell's newest reading. cell is 0 for LC1, 1 for LC2.
 void lc_latest(unsigned cell, lc_reading_t *reading);
 
+// Samples that didn't come or didn't read while the ADS1220 was running, since
+// the board started. A chip that resets shows here.
+uint32_t lc_misses(void);
+
 // Copies a cell's current zero and scale, for the data log.
 void lc_calibration(unsigned cell, lc_calibration_t *calibration);
 
