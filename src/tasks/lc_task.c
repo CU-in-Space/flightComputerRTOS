@@ -68,8 +68,8 @@ static void publish(unsigned cell, int32_t code)
     reading.mv_per_v = (float)code / (float)ADS1220_FULL_SCALE / GAIN * 1000.0f;
 
     taskENTER_CRITICAL();
-    reading.calibrated = calibration[cell].newtons_per_code != 0.0f;
-    reading.newtons = (float)(code - calibration[cell].zero_code) * calibration[cell].newtons_per_code;
+    reading.calibrated = calibration[cell].lbf_per_code != 0.0f;
+    reading.lbf = (float)(code - calibration[cell].zero_code) * calibration[cell].lbf_per_code;
     latest[cell] = reading;
     taskEXIT_CRITICAL();
 }
@@ -198,7 +198,7 @@ static void calibration_changed(unsigned cell)
     lc_calibration(1, &saved.calibration[1]);
 
     record_lc_calibration_t record = { saved.calibration[cell].zero_code,
-                                       saved.calibration[cell].newtons_per_code };
+                                       saved.calibration[cell].lbf_per_code };
     datalog_write(cell == 0 ? RECORD_LC_CALIBRATION : RECORD_LC2_CALIBRATION, &record, sizeof record);
 
     saved.crc = crc32(&saved, offsetof(saved_calibration_t, crc));
@@ -248,7 +248,7 @@ bool lc_calibrate(unsigned cell, float newtons)
         return false;
     }
     taskENTER_CRITICAL();
-    calibration[cell].newtons_per_code = newtons / (float)(code - calibration[cell].zero_code);
+    calibration[cell].lbf_per_code = newtons / (float)(code - calibration[cell].zero_code);
     taskEXIT_CRITICAL();
     calibration_changed(cell);
     return true;

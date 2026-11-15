@@ -139,7 +139,7 @@ static void fill_telemetry(radio_telemetry_t *telemetry)
             telemetry->valid |= i == 0 ? RADIO_VALID_LC1 : RADIO_VALID_LC2;
         }
         if (lc.present && lc.calibrated) {
-            telemetry->lc_newtons[i] = lc.newtons;
+            telemetry->lc_lbf[i] = lc.newtons;
             telemetry->valid |= i == 0 ? RADIO_VALID_LC1_CALIBRATED : RADIO_VALID_LC2_CALIBRATED;
         }
     }

@@ -35,10 +35,10 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
             { .name = "" },   // SOL4
         },
         .srv = {
-            { .name = "tank", .drives=VALVE_TANK, .open_us = 1000, .closed_us = 1400 },   // SRV1
-            { .name = "vent", .drives=VALVE_VENT},   // SRV2
-            { .name = "" },   // SRV3
-            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1000, .closed_us = 2000},   // SRV4
+            { .name = "tank", .drives=VALVE_TANK, .open_us = 600, .closed_us = 1225 },   // SRV1
+            { .name = "vent", .drives=VALVE_VENT, .open_us = 600, .closed_us = 1200},   // SRV2
+            { .name = "dump", .drives=VALVE_DUMP, .open_us = 600, .closed_us = 1200 },   // SRV3
+            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1250, .closed_us = 1900},   // SRV4
         },
     },
     // ---- Stand 2
@@ -55,7 +55,7 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
         .srv = {
             { .name = "line_vent", .drives= VALVE_LINE_VENT },   // SRV1
             { .name = "detach", .drives= VALVE_DETACH },   // SRV2
-            { .name = "dump", .drives = VALVE_DUMP },   // SRV3
+            { .name = "" },   // SRV3
             { .name = "" },   // SRV4
         },
     },

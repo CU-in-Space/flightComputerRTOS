@@ -23,7 +23,7 @@ typedef struct {
 // Zero and scale, set by lc_tare and lc_calibrate.
 typedef struct {
     int32_t zero_code;
-    float newtons_per_code;   // 0 until calibrated
+    float lbf_per_code;   // 0 until calibrated
 } lc_calibration_t;
 
 // Starts the ADS1220 when the HAT gets power and reads it on every DRDY.

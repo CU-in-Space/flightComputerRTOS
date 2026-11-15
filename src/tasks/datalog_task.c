@@ -205,9 +205,9 @@ static void fill_file_start(record_file_start_t *start)
     }
     lc_calibration_t lc;
     lc_calibration(0, &lc);
-    start->lc = (record_lc_calibration_t){ lc.zero_code, lc.newtons_per_code };
+    start->lc = (record_lc_calibration_t){ lc.zero_code, lc.lbf_per_code };
     lc_calibration(1, &lc);
-    start->lc2 = (record_lc_calibration_t){ lc.zero_code, lc.newtons_per_code };
+    start->lc2 = (record_lc_calibration_t){ lc.zero_code, lc.lbf_per_code };
 }
 
 // crash_report's line, and which stand this is. The radio task reads the stand

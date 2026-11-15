@@ -89,10 +89,10 @@ typedef enum {
 // The ramp is how fast a servo walks to a new position from where its arm is: a jump
 // draws stall current, and the MOV on SRV4, straight off VBAT, browned the board out.
 static const servo_limits_t servo_limits[SERVO_COUNT] = {
-    { 1000, 2000, 2000 },
-    { 1000, 2000, 2000 },
-    { 1000, 2000, 2000 },
-    { 1000, 2000, 2000 },
+    { 500, 2500, 2000 },
+    { 500, 2500, 2000 },
+    { 500, 2500, 2000 },
+    { 500, 2500, 2000 },
 };
 
 QueueHandle_t actuator_queue;
