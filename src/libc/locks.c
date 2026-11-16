@@ -54,9 +54,9 @@ static struct __lock *const s_static_locks[] = {
 
 void libc_locks_init(void)
 {
-    for (size_t i = 0; i < sizeof s_static_locks / sizeof s_static_locks[0]; i++) {
-        s_static_locks[i]->mutex = xSemaphoreCreateRecursiveMutex();
-        configASSERT(s_static_locks[i]->mutex != NULL);
+    for (size_t lock_index = 0; lock_index < sizeof s_static_locks / sizeof s_static_locks[0]; lock_index++) {
+        s_static_locks[lock_index]->mutex = xSemaphoreCreateRecursiveMutex();
+        configASSERT(s_static_locks[lock_index]->mutex != NULL);
     }
 }
 
@@ -64,11 +64,11 @@ void libc_locks_init(void)
 
 void __retarget_lock_init_recursive(_LOCK_T *lock)
 {
-    struct __lock *l = pvPortMalloc(sizeof *l);
-    configASSERT(l != NULL);
-    l->mutex = xSemaphoreCreateRecursiveMutex();
-    configASSERT(l->mutex != NULL);
-    *lock = l;
+    struct __lock *new_lock = pvPortMalloc(sizeof *new_lock);
+    configASSERT(new_lock != NULL);
+    new_lock->mutex = xSemaphoreCreateRecursiveMutex();
+    configASSERT(new_lock->mutex != NULL);
+    *lock = new_lock;
 }
 
 void __retarget_lock_close_recursive(_LOCK_T lock)

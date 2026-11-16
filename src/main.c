@@ -1,17 +1,39 @@
-/* Entry point -- brings the clocks and kernel up and starts the heartbeat.
- * Flight logic goes in its own tasks, created here alongside the heartbeat.
- */
+/* Entry point -- brings the clocks and kernel up and starts the tasks. */
+#include <stdio.h>
+
 #include "main.h"
+#include "crash.h"
 #include "system_clock.h"
 #include "gpio.h"
 #include "usart.h"
 #include "libc/locks.h"
+#include "drivers/ads1220.h"
+#include "drivers/pt_adc.h"
+#include "drivers/sd_card.h"
+#include "drivers/w25q128.h"
+#include "drivers/servo_pwm.h"
+#include "drivers/spi4_bus.h"
+#include "drivers/solenoid_pwm.h"
+#include "drivers/stepper.h"
+#include "drivers/e22.h"
+#include "drivers/vbat_adc.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "tasks/actuator_task.h"
 #include "tasks/airbrake_task.h"
+#include "tasks/console_task.h"
+#include "tasks/datalog_task.h"
+#include "tasks/interlock_task.h"
+#include "tasks/lc_task.h"
+#include "tasks/log_task.h"
 #include "tasks/state_estimation_task.h"
+#include "tasks/pt_task.h"
+#include "tasks/radio_task.h"
+#include "tasks/remote_task.h"
+#include "tasks/tc_task.h"
+#include "tasks/task_priorities.h"
 
 static void vHeartbeatTask(void *pvParameters);
 
@@ -29,19 +51,75 @@ int main(void)
      * clock, and SystemClock_Config() needs that to set the overdrive bit
      * required for VOS0 / 480 MHz. */
     HAL_Init();
+    MX_GPIO_Init();   // actuators off before anything else can go wrong
+    crash_init();
     SystemClock_Config();
 
-    MX_GPIO_Init();
     MX_USART3_UART_Init();
+    vbat_adc_init();
+    solenoid_pwm_init();
+    servo_pwm_init();
+    stepper_init();
+    pt_adc_init();
+    spi4_bus_init();
+    w25q128_init();
+    ads1220_init();
+    sd_card_init();
+    e22_init();
 
     /* Before any task exists, so every task sees working C-library locks. */
     libc_locks_init();
+
+    log_init();
+    printf("boot: SYSCLK %lu Hz\n", (unsigned long)SystemCoreClock);
+    crash_report();
+
+    actuator_init();
+    console_init();
+    datalog_init();
+    remote_init();
+
+    if (xTaskCreate(vInterlockTask,
+                    "interlock",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SAFETY,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vActuatorTask,
+                    "actuator",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_ACTUATORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vConsoleTask,
+                    "console",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_CONSOLE,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vLogTask,
+                    "log",
+                    configMINIMAL_STACK_SIZE * 2,
+                    NULL,
+                    PRIORITY_LOG,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
 
     if (xTaskCreate(vHeartbeatTask,
                     "heartbeat",
                     configMINIMAL_STACK_SIZE * 2,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_HEARTBEAT,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -52,7 +130,7 @@ int main(void)
                     "state_est",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_FLIGHT_STUBS,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -61,7 +139,63 @@ int main(void)
                     "airbrake",
                     configMINIMAL_STACK_SIZE * 4,
                     NULL,
-                    tskIDLE_PRIORITY + 1,
+                    PRIORITY_FLIGHT_STUBS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vLcTask,
+                    "lc",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vTcTask,
+                    "tc",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    // FatFs and the SD driver nest a few calls deep, hence the bigger stack.
+    if (xTaskCreate(vDatalogTask,
+                    "datalog",
+                    configMINIMAL_STACK_SIZE * 8,
+                    NULL,
+                    PRIORITY_STORAGE,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vPtTask,
+                    "pt",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_SENSORS,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    if (xTaskCreate(vRadioTask,
+                    "radio",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_RADIO,
+                    NULL) != pdPASS) {
+        Error_Handler();
+    }
+
+    // Runs the console's commands, so it gets the console's stack and priority.
+    if (xTaskCreate(vRemoteTask,
+                    "remote",
+                    configMINIMAL_STACK_SIZE * 4,
+                    NULL,
+                    PRIORITY_CONSOLE,
                     NULL) != pdPASS) {
         Error_Handler();
     }
@@ -87,30 +221,21 @@ static void vHeartbeatTask(void *pvParameters)
 
 /* ------------------------------------------------------------ FreeRTOS hooks */
 
-/* FreeRTOS owns SysTick, so HAL's millisecond tick has to be driven from here.
- * configTICK_RATE_HZ is 1000, which is exactly what HAL_GetTick() expects. */
-void vApplicationTickHook(void)
-{
-    HAL_IncTick();
-}
-
 void vApplicationMallocFailedHook(void)
 {
-    Error_Handler();
+    crash_error(__builtin_return_address(0));
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
-    (void)pcTaskName;
-    Error_Handler();
+    crash_stack_overflow(pcTaskName);
 }
 
 /* --------------------------------------------------------------------------- */
 
+// Saves an address in the calling function; look it up with addr2line.
 void Error_Handler(void)
 {
-    __disable_irq();
-    for (;;) {
-    }
+    crash_error(__builtin_return_address(0));
 }

@@ -6,6 +6,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # feeds clangd / C-C++ IntelliSense
 
+# Without the ARM toolchain file this is a host build: unit tests only.
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_subdirectory(test)
+    return()
+endif()
+
 set(TARGET_MCU     STM32H753xx)
 set(LINKER_SCRIPT  ${CMAKE_SOURCE_DIR}/linker/STM32H753ZI_FLASH.ld)
 set(STARTUP_SOURCE ${CMAKE_SOURCE_DIR}/lib/cmsis_device_h7/Source/Templates/gcc/startup_stm32h753xx.s)
@@ -57,6 +64,26 @@ target_include_directories(stm32cube PUBLIC
 target_compile_definitions(stm32cube PUBLIC ${TARGET_MCU} USE_HAL_DRIVER)
 
 # ---------------------------------------------------------------------------
+# FatFs, for the SD card. Its configuration is include/ffconf.h; the disk
+# functions it calls (disk_read etc.) are in src/drivers/sd_card.c.
+# ---------------------------------------------------------------------------
+add_library(fatfs STATIC ${CMAKE_SOURCE_DIR}/lib/fatfs/source/ff.c)
+
+target_include_directories(fatfs PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/lib/fatfs/source
+)
+
+# ---------------------------------------------------------------------------
+# Semtech's SX126x driver, for the radio. Only the LoRa/GFSK file: the LR-FHSS
+# and BPSK ones aren't used. The four bus functions it calls (sx126x_hal_write
+# etc.) are in src/drivers/e22.c.
+# ---------------------------------------------------------------------------
+add_library(sx126x STATIC ${CMAKE_SOURCE_DIR}/lib/sx126x_driver/src/sx126x.c)
+
+target_include_directories(sx126x PUBLIC ${CMAKE_SOURCE_DIR}/lib/sx126x_driver/src)
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 # Globbed recursively so files lifted out of CubeMX (stm32h7xx_hal_msp.c, peripheral inits)
@@ -72,10 +99,20 @@ add_executable(${PROJECT_NAME}
 # Strict warnings on our code only -- vendor code is noisier than we want to see.
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wshadow -Wdouble-promotion)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel)
+target_link_libraries(${PROJECT_NAME} PRIVATE stm32cube freertos_kernel fatfs sx126x)
 
 # Lets code in src/ subfolders include each other as "drivers/imu.h" etc.
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# fw_version.h, for the boot line: the git commit ("-dirty" with uncommitted
+# changes) and the build time. Written again at every build.
+add_custom_target(fw_version
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/generated/fw_version.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/fw_version.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/fw_version.h
+)
+add_dependencies(${PROJECT_NAME} fw_version)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_BINARY_DIR}/generated)
 
 target_link_options(${PROJECT_NAME} PRIVATE
     -T${LINKER_SCRIPT}

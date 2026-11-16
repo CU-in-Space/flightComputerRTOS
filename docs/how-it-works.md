@@ -242,13 +242,31 @@ In [`src/main.c`](../src/main.c):
 |---|---|---|
 | `MPU_Config()` | marks unmapped address ranges as no-access | the M7 reads ahead speculatively and would fault on them |
 | `SCB_EnableICache()` | turns on the instruction cache | free speed |
-| `HAL_Init()` | HAL setup, then calls `HAL_MspInit()`, which clocks the SYSCFG peripheral | the next call needs SYSCFG |
-| `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz** | overwrites `SystemCoreClock` with `480000000` |
-| `MX_GPIO_Init()` | makes PB0 (LD1) an output | |
+| `HAL_Init()` | HAL setup, then calls `HAL_MspInit()`, which clocks the SYSCFG peripheral | `SystemClock_Config()` needs SYSCFG |
+| `MX_GPIO_Init()` | clocks every GPIO port; drives LD1, the HAT LED and every power-board actuator line low | before anything else can go wrong |
+| `crash_init()` | unlocks the RTC backup registers that hold the crash record | |
+| `SystemClock_Config()` | raises the core voltage, starts the PLL, switches to **480 MHz**; picks the ADCs' clock | overwrites `SystemCoreClock` with `480000000` |
 | `MX_USART3_UART_Init()` | sets up the serial port to the ST-LINK's virtual COM port | |
+| `vbat_adc_init()` | sets up and calibrates ADC3, then starts it converting the battery voltage and the 3.3 V rail by itself, about 1000 times a second each | all hardware setup happens here, before any task runs |
+| `solenoid_pwm_init()` | starts TIM1's 20 kHz PWM at 0 %, then hands SOL1–4 to it | |
+| `servo_pwm_init()` | starts TIM4's 50 Hz servo PWM with no pulses, then hands SRV1–4 to it | |
+| `stepper_init()` | sets up TIM2 for STEP pulses (stopped) and the FAULT and limit-switch inputs; the DRV8825 stays asleep | |
+| `pt_adc_init()` | sets up ADC1 + ADC2 in dual mode, their DMA and TIM15, and calibrates both; nothing samples yet | |
+| `spi4_bus_init()` | sets up SPI4 and its mutex; the pins stay high impedance until the HAT has power | |
+| `ads1220_init()` | sets up SPI5 and its mutex for the load-cell ADC; pins also wait for HAT power | |
+| `sd_card_init()` | turns on SDMMC1's clock; the card itself starts when the log does, 200 ms after the HAT gets power | |
 | `libc_locks_init()` | creates the mutexes that make the C library safe to share between tasks | must exist before any task runs |
+| `log_init()`, `printf(…)`, `crash_report()` | creates the debug-log queue; prints a boot line, the reset reason and any saved crash | from here on any task can `printf` |
+| `actuator_init()`, `console_init()`, `datalog_init()` | create the actuator command queue; turn on the serial port's receive interrupt; create the data log's request semaphore | |
+| `xTaskCreate(vInterlockTask, …)` | checks the battery voltage every 10 ms: the cable interlock. Also switches the HAT's SPI pins (SPI4, SPI5) with ENABLED (HAT powered) | highest application priority |
+| `xTaskCreate(vActuatorTask, …)` | owns the solenoids, servos and stepper; applies commands while the interlock is ENABLED; walks each servo to a new position from where its arm is (kept in RTC backup registers through a reset) instead of jumping | |
+| `xTaskCreate(vConsoleTask, …)` | reads typed commands from the serial port | |
+| `xTaskCreate(vLogTask, …)` | the only task that writes to USART3 | |
 | `xTaskCreate(vHeartbeatTask, …)` | registers the heartbeat task (it doesn't run yet) | |
 | `xTaskCreate(vStateEstimationTask, …)`, `xTaskCreate(vAirbrakeTask, …)` | registers the two flight tasks in `src/tasks/`. For now they're stubs that just sleep | |
+| `xTaskCreate(vLcTask, …)` | starts the load-cell ADC whenever the HAT gets power, reads all 1000 samples a second, publishes 10 ms averages | |
+| `xTaskCreate(vTcTask, …)` | sets the four thermocouple chips up whenever the HAT gets power, then reads them every 100 ms; once a second sets up again any chip a power dip reset | |
+| `xTaskCreate(vPtTask, …)` | starts PT sampling (1 kHz) and turns each 10 ms block into a pressure per PT | |
 | `vTaskStartScheduler()` | **hands the CPU to FreeRTOS. Never returns.** | |
 
 ### The scheduler: how the LED actually blinks
@@ -257,8 +275,10 @@ FreeRTOS takes over the Cortex-M **SysTick** timer and has it interrupt **1,000
 times per second**. On every tick:
 
 - the kernel checks whether any waiting task is due, and switches to it
-- `vApplicationTickHook()` calls `HAL_IncTick()`, so HAL's millisecond clock keeps
-  counting
+
+HAL keeps its own millisecond clock (`HAL_GetTick()`) on a separate timer, TIM6,
+at an interrupt priority FreeRTOS never masks, so it runs even before the scheduler
+starts.
 
 The heartbeat task is a loop:
 
@@ -309,10 +329,15 @@ The most useful way to read the tree is by **who's allowed to change each file**
 **You write these**
 ```
 src/main.c                    startup order, tasks, FreeRTOS hooks, Error_Handler
-src/stm32h7xx_it.c            fault handlers, plus peripheral interrupt handlers as you add them
+src/stm32h7xx_it.c            fault handlers; peripheral interrupt handlers live with the code that owns the peripheral
 src/libc/locks.c              makes the C library thread-safe: newlib's locks on FreeRTOS mutexes
 src/libc/syscalls.c           low-level functions the C library needs, e.g. growing malloc's heap
-src/tasks/                    one file per task: state estimation and airbrake (stubs for now)
+src/tasks/                    one file per task: interlock, actuators, console, PT, TC, load cell, log; state estimation and airbrake are stubs
+src/app/                      plain-C logic with no hardware, tested on your laptop (test/)
+src/drivers/                  one peripheral or chip each: PT ADCs, VBAT ADC, solenoid PWM, servo PWM, stepper, SPI4 bus, MAX31856, W25Q128, ADS1220
+src/board/                    the pin map
+src/gpio.c                    MX_GPIO_Init: every port clock, every plain output, all low at boot
+src/system_clock.c            SystemClock_Config (480 MHz, ADC clock) + MPU_Config
 include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt priorities
 ```
 
@@ -320,16 +345,15 @@ include/FreeRTOSConfig.h      kernel settings: tick rate, heap size, interrupt p
 ```
 cubemx/fc.ioc                 ← the source of truth. Change pins and clocks here,
                                 regenerate, and copy the files below back in.
-src/system_clock.c            SystemClock_Config (480 MHz) + MPU_Config
 src/stm32h7xx_hal_msp.c       each peripheral's clock and pin setup ("MCU Support Package")
-src/gpio.c, src/usart.c       MX_GPIO_Init, MX_USART3_UART_Init
+src/usart.c                   MX_USART3_UART_Init
 include/main.h, gpio.h, usart.h
 ```
 
 **Build and flash configuration**
 ```
 CMakeLists.txt                what to compile, how to link, the `flash` target
-CMakePresets.json             debug and release presets
+CMakePresets.json             debug, release and test presets
 cmake/arm-none-eabi-gcc.cmake the cross-compiler and CPU flags
 linker/STM32H753ZI_FLASH.ld   the memory map
 openocd/nucleo-h753zi.cfg     debugger settings
@@ -343,6 +367,7 @@ lib/FreeRTOS-Kernel           the RTOS
 lib/stm32h7xx_hal_driver      ST's HAL
 lib/cmsis_device_h7           the H7 register map, startup assembly, SystemInit
 lib/cmsis_core                Cortex-M core definitions
+lib/fatfs                     FatFs (ST's copy), the SD card's file system; configured in include/ffconf.h
 ```
 
 **Generated output — never commit**
@@ -356,13 +381,13 @@ cubemx/ (except fc.ioc)       CubeMX's scratch project
 | You want to… | Do this |
 |---|---|
 | add a task | write it in `src/` (every `.c` file under `src/`, subfolders included, is compiled automatically) and `xTaskCreate` it in `main()` |
-| use a new peripheral | enable it in `cubemx/fc.ioc`, regenerate, copy the new files in |
-| handle an interrupt | add its handler to `src/stm32h7xx_it.c`. **Never** add `SysTick_Handler`, `PendSV_Handler` or `SVC_Handler` — FreeRTOS owns those |
+| use a new peripheral | write a driver in `src/drivers/`: it sets up the peripheral and its pins, and `main()` calls its init before the scheduler starts |
+| handle an interrupt | put its handler in the file that owns the peripheral (e.g. `USART3_IRQHandler` in `src/tasks/console_task.c`). **Never** add `SysTick_Handler`, `PendSV_Handler` or `SVC_Handler` — FreeRTOS owns those |
 | change heap size or tick rate | edit `include/FreeRTOSConfig.h` |
 
 ### How to lay out code as it grows
 
-Today there's `main.c` plus two stub tasks in `src/tasks/`. Once sensors, logging
+Today there are tasks, drivers, `app/` logic and the board pin map. As sensors, logging
 and airbrake control arrive, a common, proven shape is three kinds of module, each
 in its own folder under `src/`. Subfolders compile automatically, and `#include "drivers/imu.h"` works.
 
@@ -370,7 +395,8 @@ in its own folder under `src/`. Subfolders compile automatically, and `#include 
 src/
   main.c                     creates the tasks, nothing else
   libc/                      glue that makes the C library work under FreeRTOS (already exists)
-  drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. No FreeRTOS.
+  drivers/  imu.c  baro.c    one chip each, spoken to over SPI/I²C via the HAL. FreeRTOS only where
+                             the hardware needs it, e.g. a mutex on a shared bus.
   tasks/    state_estimation_task.c  airbrake_task.c  log_task.c
                              one job each: wait on a queue, do the work, pass results on
                              (the first two exist as stubs)
@@ -391,10 +417,14 @@ Three rules make it work:
    use the HAL. A driver never calls a task, and app logic never touches the HAL.
 2. **Tasks share data through queues, not global variables.** One task writing a
    global while another reads it is the classic RTOS bug. It passes on the bench and
-   fails at random.
+   fails at random. The one exception is a single word that one task writes and
+   others only read, like the interlock state: a `static volatile` variable behind
+   a getter.
 3. **Keep `app/` free of HAL and FreeRTOS.** Then the flight logic — the code that
    matters most — also compiles on your computer, where you can test it against
-   recorded flight data without a board.
+   recorded flight data without a board. Small logic that belongs to one task
+   and its hardware, like the interlock or peak-and-hold, stays in that task's
+   file, where it's easier to follow than split across two.
 
 Treat this as a starting point, not a law. *Making Embedded Systems* and Miro
 Samek's course (below) explain the reasoning and the alternatives.
