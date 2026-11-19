@@ -36,9 +36,9 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
         },
         .srv = {
             { .name = "tank", .drives=VALVE_TANK, .open_us = 670, .closed_us = 1310 },   // SRV1
-            { .name = "vent", .drives=VALVE_VENT, .open_us = 600, .closed_us = 1200},   // SRV2
-            { .name = "dump", .drives=VALVE_DUMP, .open_us = 600, .closed_us = 1200 },   // SRV3
-            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1250, .closed_us = 1900},   // SRV4
+            { .name = "vent", .drives=VALVE_VENT, .open_us = 530, .closed_us = 1200},   // SRV2
+            { .name = "dump", .drives=VALVE_DUMP, .open_us = 600, .closed_us = 1300},   // SRV3
+            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1860, .closed_us = 1200},   // SRV4 -- linkage version
         },
     },
     // ---- Stand 2
@@ -47,16 +47,16 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
         .tc = { "", "", "", "" },
         .lc = { "", "" },
         .sol = {
-            { .name = "" },   // SOL1
-            { .name = "supply", .drives = VALVE_SUPPLY },   // SOL2
+            { .name = "" },   // SOL1 -- BRICKED ON PHYSICAL BOARD AS OF 11/18/26
+            { .name = "" },   // SOL2
             { .name = "" },   // SOL3
-            { .name = "" },   // SOL4
+            { .name = "supply", .drives = VALVE_SUPPLY },   // SOL4
         },
         .srv = {
-            { .name = "line_vent", .drives= VALVE_LINE_VENT },   // SRV1
-            { .name = "detach", .drives= VALVE_DETACH },   // SRV2
-            { .name = "" },   // SRV3
-            { .name = "" },   // SRV4
+            [0]={ .name = "" },                                   // SRV1 -- BRICKED ON PHYSICAL BOARD AS OF 11/18/26
+            [1]={ .name = "line_vent", .drives = VALVE_LINE_VENT, .open_us = 600, .closed_us = 1200 },            // SRV2, GUESSED
+            [2]={ .name = "" },                                   // SRV3
+            [3]={ .name = "" },                                   // SRV4
         },
     },
 };
