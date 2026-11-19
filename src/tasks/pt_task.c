@@ -16,7 +16,7 @@
 // transducers. Set full_scale to whichever ends up on each port.
 static const pt_calibration_t calibrations[PT_COUNT] = {
     { .ratio_at_zero = 0.10f, .ratio_at_full = 0.90f, .full_scale = 1000.0f },   // PT1 ox tank
-    { .ratio_at_zero = 0.10f, .ratio_at_full = 0.90f, .full_scale = 500.0f },    // PT2 chamber
+    { .ratio_at_zero = 0.10f, .ratio_at_full = 0.90f, .full_scale = 1000.0f },    // PT2 chamber
 };
 
 static TaskHandle_t pt_task_handle;

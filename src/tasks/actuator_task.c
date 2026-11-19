@@ -85,9 +85,6 @@ typedef enum {
     STEPPER_BACKING_OFF,
 } stepper_job_t;
 
-// Safe for any hobby servo. Widen a channel once its end stops are measured.
-// The ramp is how fast a servo walks to a new position from where its arm is: a jump
-// draws stall current, and the MOV on SRV4, straight off VBAT, browned the board out.
 static const servo_limits_t servo_limits[SERVO_COUNT] = {
     { 500, 2500, 2000 },
     { 500, 2500, 2000 },

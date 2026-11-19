@@ -42,7 +42,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     int32_t zero_code;
-    float lbf_per_code;
+    float newtons_per_code;
 } record_lc_calibration_t;
 
 typedef struct __attribute__((packed)) {

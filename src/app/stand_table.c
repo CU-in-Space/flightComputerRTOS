@@ -35,7 +35,7 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
             { .name = "" },   // SOL4
         },
         .srv = {
-            { .name = "tank", .drives=VALVE_TANK, .open_us = 600, .closed_us = 1225 },   // SRV1
+            { .name = "tank", .drives=VALVE_TANK, .open_us = 670, .closed_us = 1310 },   // SRV1
             { .name = "vent", .drives=VALVE_VENT, .open_us = 600, .closed_us = 1200},   // SRV2
             { .name = "dump", .drives=VALVE_DUMP, .open_us = 600, .closed_us = 1200 },   // SRV3
             { .name = "mov", .drives = VALVE_MOV,  .open_us = 1250, .closed_us = 1900},   // SRV4

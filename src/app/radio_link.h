@@ -105,10 +105,10 @@ typedef struct __attribute__((packed)) {
 #define RADIO_VALID_PT1             (1U << 0)   // pt_psi[0] is a reading
 #define RADIO_VALID_PT2             (1U << 1)
 #define RADIO_VALID_LC1             (1U << 2)   // lc_code[0] is a reading
-#define RADIO_VALID_LC1_CALIBRATED  (1U << 3)   // lc_lbf[0] means something
+#define RADIO_VALID_LC1_CALIBRATED  (1U << 3)   // lc_newtons[0] means something
 #define RADIO_VALID_TC1             (1U << 4)   // tc_c[0] is a reading with no fault; TC2-4 are bits 5-7
 #define RADIO_VALID_LC2             (1U << 8)   // lc_code[1] is a reading
-#define RADIO_VALID_LC2_CALIBRATED  (1U << 9)   // lc_lbf[1] means something
+#define RADIO_VALID_LC2_CALIBRATED  (1U << 9)   // lc_newtons[1] means something
 
 #define RADIO_FLAG_LOGGING         (1U << 0)   // the data log is recording to the SD card
 // The stand lost the launch box for too long and went to the abort positions by
@@ -130,7 +130,7 @@ typedef struct __attribute__((packed)) {
     uint16_t servo_us[4];   // pulse being sent, 0 = off
     uint16_t vbat_mv;
     float pt_psi[2];
-    float lc_lbf[2];    // LC1 (the fast one), LC2 (the slow weight)
+    float lc_newtons[2];    // LC1 (the fast one), LC2 (the slow weight)
     int32_t lc_code[2];     // raw: LC1's 10 ms average, LC2's latest sample
     float tc_c[4];
     uint32_t log_bytes;     // written to the current SD file
