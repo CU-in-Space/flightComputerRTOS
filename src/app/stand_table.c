@@ -54,7 +54,7 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
         },
         .srv = {
             [0]={ .name = "" },                                   // SRV1 -- BRICKED ON PHYSICAL BOARD AS OF 11/18/26
-            [1]={ .name = "line_vent", .drives = VALVE_LINE_VENT, .open_us = 600, .closed_us = 1200 },            // SRV2, GUESSED
+            [1]={ .name = "line_vent", .drives = VALVE_LINE_VENT, .open_us = 590, .closed_us = 1250 },            // SRV2, GUESSED
             [2]={ .name = "" },                                   // SRV3
             [3]={ .name = "" },                                   // SRV4
         },
