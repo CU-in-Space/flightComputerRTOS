@@ -129,18 +129,20 @@ void datalog_status(datalog_status_t *copy)
     taskEXIT_CRITICAL();
 }
 
-// One past the highest LOGnnnn.BIN already on the card.
+// S1_nnnn.BIN on stand 1, S2_nnnn.BIN on stand 2: one past this stand's highest
+// already on the card, so the two stands' files never share a name.
 static bool next_file_name(char name[13])
 {
     DIR dir;
     FILINFO info;
     unsigned long highest = 0;
+    const char prefix[4] = { 'S', (char)('0' + stand_number()), '_', '\0' };   // stand is 1 or 2
 
     if (f_opendir(&dir, "/") != FR_OK) {
         return false;
     }
     while (f_readdir(&dir, &info) == FR_OK && info.fname[0] != '\0') {
-        if (strlen(info.fname) == 11 && strncmp(info.fname, "LOG", 3) == 0
+        if (strlen(info.fname) == 11 && strncmp(info.fname, prefix, 3) == 0
             && strcmp(&info.fname[7], ".BIN") == 0) {
             unsigned long number = strtoul(&info.fname[3], NULL, 10);
             if (number > highest) {
@@ -153,7 +155,7 @@ static bool next_file_name(char name[13])
     if (highest >= 9999) {
         return false;
     }
-    snprintf(name, 13, "LOG%04lu.BIN", highest + 1);
+    snprintf(name, 13, "%s%04lu.BIN", prefix, highest + 1);
     return true;
 }
 

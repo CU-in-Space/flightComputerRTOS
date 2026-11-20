@@ -134,7 +134,7 @@ typedef struct __attribute__((packed)) {
     int32_t lc_code[2];     // raw: LC1's 10 ms average, LC2's latest sample
     float tc_c[4];
     uint32_t log_bytes;     // written to the current SD file
-    // While recording, the SD file's number (7 for LOG0007.BIN), else 0.
+    // While recording, the SD file's number (7 for S1_0007.BIN), else 0.
     uint16_t log_file;
     int8_t rssi_dbm;        // how the stand heard the packet this answers
     int8_t snr_db;

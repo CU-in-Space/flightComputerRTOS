@@ -14,7 +14,7 @@ decodes them and writes, into a new folder named after the time it started:
   events.csv              commands, names, log starts and stops, restarts
 
 It records from start to quit, whatever the stands are doing. A row's log_file
-(LOG0007) is the SD file the stand was writing, and its stand_time_s is the
+(S1_0007) is the SD file the stand was writing, and its stand_time_s is the
 time_s that hat_log.py gives the same moment in that file.
 
 Type:
@@ -90,8 +90,9 @@ RESULTS = {
 }
 
 
-def log_name(number):
-    return f"LOG{number:04d}" if number else ""
+def log_name(stand, number):
+    """The stand's SD file name without .BIN: S1_0007."""
+    return f"S{stand}_{number:04d}" if number else ""
 
 
 def blank_or(value, digits):
@@ -153,7 +154,8 @@ LINK_HEADER = (["pc_time", "session_s", "box_packets", "laptop_packets"]
 class Telemetry:
     """One telemetry packet, decoded."""
 
-    def __init__(self, data):
+    def __init__(self, stand, data):
+        self.stand = stand
         (_, _, _, self.time_ms, self.valid, self.flags, self.solenoids, self.valves_mapped,
          self.valves, *rest) = TELEMETRY_PACKET.unpack(data)
         self.servo_us, self.vbat_mv = rest[0:4], rest[4]
@@ -182,7 +184,7 @@ class Telemetry:
 
     def run(self):
         """The run's name: the SD file's."""
-        return log_name(self.log_file)
+        return log_name(self.stand, self.log_file)
 
 
 class Run:
@@ -203,10 +205,10 @@ class Run:
         return t.log_file == self.log_file
 
     def name(self):
-        return log_name(self.log_file)
+        return log_name(self.stand, self.log_file)
 
     def row(self):
-        return [self.stand, log_name(self.log_file), self.started, self.stopped,
+        return [self.stand, log_name(self.stand, self.log_file), self.started, self.stopped,
                 self.boot, f"{self.first_s:.3f}", f"{self.last_s:.3f}", self.rows, self.log_bytes, self.ended]
 
 
@@ -246,7 +248,7 @@ class Stand:
 
     def row(self, t, rssi, snr, pc_time, session_s):
         return ([pc_time, f"{session_s:.3f}", self.boot, f"{t.time_ms / 1000:.3f}",
-                 log_name(t.log_file), t.log_bytes if t.logging else "",
+                 t.run(), t.log_bytes if t.logging else "",
                  int(t.logging), int(t.aborted), rssi, snr, t.rssi_dbm, t.snr_db, f"{t.vbat_mv / 1000:.3f}"]
                 + [blank_or(t.pt(i), 2) for i in range(2)]
                 + [blank_or(t.tc(i), 2) for i in range(4)]
@@ -366,7 +368,7 @@ class Session:
                 self.ask(to, ms)
                 self.show_packet(who, KINDS.get(kind, "?"), detail(kind, sequence, data), rssi, snr)
             if kind == TELEMETRY and 1 <= sender <= STAND_MAX and len(data) == TELEMETRY_PACKET.size:
-                t = Telemetry(data)
+                t = Telemetry(sender, data)
                 text = self.answer(sender, ms, rssi) + f", last command #{sequence}"
                 text += f", logging {t.run()}" if t.logging else ""
                 text += ", WENT SAFE BY ITSELF" if t.aborted else ""
@@ -470,7 +472,7 @@ class Session:
                 stand.run = Run(stand, t, pc_time)
                 self.runs.append(stand.run)
                 self.write_runs()
-                self.event(number, t, f"started logging: {log_name(t.log_file)}")
+                self.event(number, t, f"started logging: {t.run()}")
             stand.run.last_s = t.time_ms / 1000
             stand.run.rows += 1
             stand.run.log_bytes = max(stand.run.log_bytes, t.log_bytes)

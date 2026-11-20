@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode a Sensor HAT data log (LOGnnnn.BIN from the SD card) into CSV files.
+"""Decode a Sensor HAT data log (S1_nnnn.BIN or S2_nnnn.BIN) into CSV files.
 
 Writes, into a folder named after the log:
   pt.csv         every PT sample (1 kHz): raw counts, ratio and psi
@@ -23,7 +23,7 @@ Writes, into a folder named after the log:
                  radio's link and the launch box's STATE as they change
 
 From format 4 the firmware starts a new file every hour. Each decodes on its own,
-and near the top of events.csv a later one says "continues LOGnnnn.BIN".
+and near the top of events.csv a later one says "continues S1_nnnn.BIN".
 
 A channel with a name in the firmware's stand table has it in its columns:
 tc2_nozzle_c instead of tc2_c.
@@ -33,7 +33,7 @@ since the board booted. Psi and newtons use the calibration recorded in the file
 so a file decodes the same however the firmware has changed since.
 
 Usage:
-    python3 tools/hat_log.py LOG0001.BIN [LOG0002.BIN ...] [--out DIR]
+    python3 tools/hat_log.py S1_0001.BIN [S1_0002.BIN ...] [--out DIR]
 """
 import argparse
 import csv

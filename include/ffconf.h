@@ -17,7 +17,7 @@
 #define FF_STRF_ENCODE      0
 
 #define FF_CODE_PAGE        437 // US: only ASCII names are used
-#define FF_USE_LFN          0   // 8.3 names (LOG0001.BIN) are enough
+#define FF_USE_LFN          0   // 8.3 names (S1_0001.BIN) are enough
 #define FF_MAX_LFN          255
 #define FF_LFN_UNICODE      0
 #define FF_LFN_BUF          255

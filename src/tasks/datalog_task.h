@@ -10,9 +10,10 @@
 // Records sensor data to the SD card. Recording starts by itself whenever the HAT
 // gets power, and runs until datalog_stop or the HAT loses power; datalog_start
 // starts it again after a stop. Meanwhile tasks hand records to datalog_write,
-// and this task writes them to LOGnnnn.BIN, flushed every 200 ms, a new file
-// every hour. Each file starts with the file start, the names and the boot line;
-// a health record goes in every second. The format is app/log_records.h.
+// and this task writes them to S1_nnnn.BIN (S2_nnnn.BIN on stand 2), flushed
+// every 200 ms, a new file every hour. Each file starts with the file start, the
+// names and the boot line; a health record goes in every second. The format is
+// app/log_records.h.
 
 typedef struct {
     bool recording;

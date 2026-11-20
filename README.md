@@ -244,8 +244,8 @@ there.
 6. ARM plug in last, before leaving the stand. Run the test from the launch
    box. Its abort button is the abort; so is 60 s without the launch box.
 7. `log stop` at each stand, or `stop` in `ground.py` for both. Then
-   `python3 tools/hat_log.py LOGnnnn.BIN --out <folder>`. `ground.py`'s
-   `runs.csv` says which LOG files each stand wrote while it ran.
+   `python3 tools/hat_log.py S1_nnnn.BIN --out <folder>`. `ground.py`'s
+   `runs.csv` says which files each stand wrote while it ran.
 
 ---
 
@@ -274,7 +274,7 @@ src/stm32h7xx_it.c              core fault handlers              (hand-written)
 cubemx/fc.ioc                   CubeMX source of truth for the above
 docs/radio-link.md              the radio link, for whoever programs the launch box
 lib/                            pinned vendor submodules
-tools/hat_log.py                decodes an SD-card log (LOGnnnn.BIN) into CSV files
+tools/hat_log.py                decodes an SD-card log (S1_nnnn.BIN) into CSV files
 tools/ground.py                 the laptop's ground station: logs telemetry to CSV, sends commands
 tools/ground_link/              the ground station's radio: a Nano + RFM95 sketch
 ```

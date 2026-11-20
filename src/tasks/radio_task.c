@@ -183,7 +183,7 @@ static void fill_telemetry(radio_telemetry_t *telemetry)
     if (log.recording) {
         telemetry->flags |= RADIO_FLAG_LOGGING;
         telemetry->log_bytes = log.bytes_written;
-        // "LOG0007.BIN": the number starts after "LOG".
+        // "S1_0007.BIN": the number starts after "S1_".
         telemetry->log_file = (uint16_t)strtoul(&log.file_name[3], NULL, 10);
     }
 
