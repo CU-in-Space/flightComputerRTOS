@@ -155,18 +155,6 @@ static bool servo_ramps(unsigned i)
     return servo_limits[i].ramp_us_per_s != 0 && servos[i].position_us != 0 && servos[i].target_us != 0;
 }
 
-// Where a servo's arm is taken to be when nothing has been sent to it since power-up:
-// its valve's safe position, since the stand is turned off safe. 0 = no idea.
-static uint16_t assumed_position(unsigned i)
-{
-    unsigned output = SOLENOID_COUNT + i;
-    uint16_t drive = 0;
-    if (!stand_safe_drive(output, stand_output(output), &drive) || !servo_in_limits(i, drive)) {
-        return 0;
-    }
-    return drive;
-}
-
 static void save_positions(void)
 {
     RTC->BKP14R = servos[0].position_us | (uint32_t)servos[1].position_us << 16;
@@ -175,7 +163,8 @@ static void save_positions(void)
 }
 
 // After a reset: where each servo was. After a power cycle the registers are clear
-// and every position stays unknown.
+// and every position stays unknown, so the first pulse jumps straight to the target:
+// the arm hasn't moved since power-off, so it's most likely there already.
 static void load_positions(void)
 {
     if (RTC->BKP16R != SERVO_SAVED_MAGIC) {
@@ -435,9 +424,6 @@ void vActuatorTask(void *pvParameters)
         // chases its pulse with its own position loop, so small steps never ask it
         // for stall current, and its first pulse after off or a reset moves nothing.
         for (unsigned i = 0; i < SERVO_COUNT; i++) {
-            if (servos[i].target_us != 0 && servos[i].position_us == 0) {
-                servos[i].position_us = assumed_position(i);
-            }
             if (servo_ramps(i)) {
                 uint16_t step = servo_limits[i].ramp_us_per_s * ACTUATOR_PERIOD_MS / 1000U;
                 uint16_t from = servos[i].position_us;

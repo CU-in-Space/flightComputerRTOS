@@ -204,7 +204,7 @@ Commands, at the serial console or sent from the launch box:
 | `off` | every actuator off |
 | `safe` | every actuator to its abort position: a valve goes where `RADIO_VALVE_ABORT` in `src/app/radio_link.h` says, everything else off |
 | `sol <1-4 or name> <on\|off>` | a solenoid. Several asked on at once switch on 100 ms apart, SOL1 first, so their full-current peaks don't overlap; off is immediate |
-| `srv <1-4 or name> <us\|off>` | a servo's pulse width. Each servo walks there at 2000 µs a second from where its arm is: the last pulse sent (kept through `off` and resets), or after a power cycle its valve's safe position, so **turn the stand off safe** |
+| `srv <1-4 or name> <us\|off>` | a servo's pulse width. Each servo walks there at 2000 µs a second from where its arm is: the last pulse sent (kept through `off` and resets). After a power cycle that's unknown, so the first pulse jumps straight to the target |
 | `stp home \| zero \| stop \| go <step> \| jog <steps>` | the stepper |
 | `pt`, `tc`, `lc` | one reading. Add `stream` for a running display (serial console only) |
 | `lc tare <1\|2>`, `lc cal <1\|2> <N>` | zero a load cell; calibrate it with a known load. The cell is its number or name. Both are kept in flash |
