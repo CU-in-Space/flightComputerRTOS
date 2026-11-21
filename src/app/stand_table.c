@@ -38,7 +38,7 @@ const stand_t stand_table[RADIO_STAND_MAX] = {
             { .name = "tank", .drives=VALVE_TANK, .open_us = 670, .closed_us = 1310 },   // SRV1
             { .name = "vent", .drives=VALVE_VENT, .open_us = 530, .closed_us = 1200},   // SRV2
             { .name = "dump", .drives=VALVE_DUMP, .open_us = 600, .closed_us = 1300},   // SRV3
-            { .name = "mov", .drives = VALVE_MOV,  .open_us = 1860, .closed_us = 1200},   // SRV4 -- linkage version
+            { .name = "mov", .drives = VALVE_MOV,  .open_us = 670, .closed_us = 1315},   // SRV4 -- NO LINKAGE
         },
     },
     // ---- Stand 2
